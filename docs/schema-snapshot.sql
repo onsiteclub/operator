@@ -1,0 +1,236 @@
+-- Schema snapshot for operator_2 — tables used by this app
+-- Generated: 2026-04-18
+-- Source: Supabase project dbasazrdbtigrdntaehb
+
+-- =============================================
+-- frm_material_requests (= "Requests" in the app)
+-- =============================================
+-- id                uuid PK DEFAULT gen_random_uuid()
+-- organization_id   uuid
+-- lot_id            uuid NOT NULL
+-- phase_id          text NOT NULL
+-- jobsite_id        uuid
+-- material_type     varchar
+-- material_name     varchar
+-- quantity          numeric
+-- unit              varchar DEFAULT 'pcs'
+-- notes             text
+-- urgency_level     varchar DEFAULT 'medium'
+-- urgency_score     integer DEFAULT 50
+-- urgency_reason    text
+-- urgency_factors   jsonb DEFAULT '{}'
+-- requested_by      uuid NOT NULL
+-- requested_by_name varchar
+-- authorized_by     uuid
+-- authorized_at     timestamptz
+-- operator_id       uuid
+-- status            text DEFAULT 'requested' (requested/acknowledged/in_transit/delivered/cancelled)
+-- requested_at      timestamptz DEFAULT now()
+-- acknowledged_at   timestamptz
+-- in_transit_at     timestamptz
+-- delivered_at      timestamptz
+-- delivered_by_id   uuid
+-- delivered_by_name varchar
+-- delivery_notes    text
+-- delivery_location text
+-- cancelled_by_id   uuid
+-- cancelled_at      timestamptz
+-- cancel_reason     text
+-- created_at        timestamptz DEFAULT now()
+-- updated_at        timestamptz DEFAULT now()
+-- deleted_at        timestamptz (soft delete)
+-- photo_url         text
+-- sub_items         jsonb
+-- raw_message       text          ← NEW (operator_2)
+-- source            text DEFAULT 'manual' CHECK (manual/ai_parsed/ai_ambiguous) ← NEW
+-- confidence        numeric(3,2)  ← NEW
+-- language_detected text          ← NEW
+
+-- =============================================
+-- frm_site_workers (= "Workers" — auto-materialized on first message)
+-- =============================================
+-- id               uuid PK DEFAULT gen_random_uuid()
+-- organization_id  uuid
+-- jobsite_id       uuid NOT NULL
+-- worker_id        uuid NOT NULL
+-- worker_name      text
+-- is_active        boolean DEFAULT true
+-- assigned_by      uuid
+-- created_at       timestamptz DEFAULT now()
+-- updated_at       timestamptz DEFAULT now()
+-- phone_e164       text          ← NEW (operator_2)
+-- display_name     text          ← NEW
+-- trades           text[] DEFAULT '{}' ← NEW
+-- first_seen_at    timestamptz DEFAULT now() ← NEW
+-- last_active_at   timestamptz DEFAULT now() ← NEW
+-- total_requests   integer DEFAULT 0 ← NEW
+-- UNIQUE INDEX: (phone_e164, jobsite_id) WHERE phone_e164 IS NOT NULL
+
+-- =============================================
+-- frm_messages (= "Message log" — inbound/outbound I/O)
+-- =============================================
+-- id               uuid PK DEFAULT gen_random_uuid()
+-- organization_id  uuid
+-- jobsite_id       uuid NOT NULL
+-- lot_id           uuid
+-- sender_type      text NOT NULL (worker/operator/system/ai)
+-- sender_id        uuid
+-- sender_name      text NOT NULL
+-- sender_avatar_url text
+-- content          text NOT NULL
+-- attachments      jsonb DEFAULT '[]'
+-- is_ai_response   boolean DEFAULT false
+-- ai_question      text
+-- ai_context       jsonb
+-- ai_model         text
+-- metadata         jsonb DEFAULT '{}'
+-- reply_to_id      uuid
+-- phase_at_creation integer DEFAULT 1
+-- created_at       timestamptz NOT NULL DEFAULT now()
+-- INDEX: (jobsite_id, created_at DESC) ← NEW
+
+-- =============================================
+-- frm_jobsites (= "Sites" — machine status lives here)
+-- =============================================
+-- id               uuid PK DEFAULT gen_random_uuid()
+-- organization_id  uuid
+-- name             text NOT NULL
+-- builder_name     text NOT NULL
+-- address          text
+-- city             text DEFAULT 'Ottawa'
+-- svg_data         text
+-- original_plan_url text
+-- total_lots       integer DEFAULT 0
+-- completed_lots   integer DEFAULT 0
+-- start_date       date
+-- expected_end_date date
+-- status           text DEFAULT 'active'
+-- foreman_id       uuid
+-- lumberyard_notes text
+-- created_at       timestamptz DEFAULT now()
+-- updated_at       timestamptz DEFAULT now()
+-- machine_down     boolean DEFAULT false
+-- machine_down_at  timestamptz
+-- machine_down_reason text
+-- refuel_needed    boolean DEFAULT false
+-- refuel_needed_at timestamptz
+-- tz               text DEFAULT 'America/Toronto' ← NEW (operator_2)
+
+-- =============================================
+-- frm_operator_assignments (= operator ↔ jobsite link)
+-- =============================================
+-- id              uuid PK DEFAULT gen_random_uuid()
+-- organization_id uuid
+-- operator_id     uuid NOT NULL
+-- jobsite_id      uuid NOT NULL
+-- is_active       boolean DEFAULT true
+-- is_available    boolean DEFAULT true
+-- available_since timestamptz
+-- assigned_at     timestamptz DEFAULT now()
+-- assigned_by     uuid
+-- notes           text
+-- created_at      timestamptz DEFAULT now()
+-- updated_at      timestamptz DEFAULT now()
+
+-- =============================================
+-- frm_warnings (= "Alerts to supervisor")
+-- =============================================
+-- id              uuid PK DEFAULT gen_random_uuid()
+-- organization_id uuid
+-- lot_id          uuid
+-- target_type     text NOT NULL
+-- target_id       uuid
+-- category        text NOT NULL (low_fuel/broken/maintenance/other)
+-- title           text NOT NULL
+-- description     text
+-- sent_by         uuid
+-- priority        text DEFAULT 'warning'
+-- persistent      boolean DEFAULT true
+-- dismissable     boolean DEFAULT true
+-- status          text DEFAULT 'active'
+-- resolved_by     uuid
+-- resolved_at     timestamptz
+-- resolved_proof  text
+-- expires_at      timestamptz
+-- created_at      timestamptz DEFAULT now()
+
+-- =============================================
+-- frm_patterns (= AI vocabulary learning — NEW table)
+-- =============================================
+-- id                  uuid PK DEFAULT gen_random_uuid()
+-- worker_id           uuid NOT NULL
+-- jobsite_id          uuid REFERENCES frm_jobsites(id)
+-- keyword             text NOT NULL
+-- canonical_material  text NOT NULL
+-- sample_count        integer DEFAULT 1
+-- confidence          numeric(3,2) DEFAULT 0.50
+-- last_used_at        timestamptz DEFAULT now()
+-- created_at          timestamptz DEFAULT now()
+-- UNIQUE(worker_id, keyword)
+-- INDEX: (worker_id, confidence DESC)
+
+-- =============================================
+-- frm_ai_reports (= "Daily reports")
+-- =============================================
+-- id               uuid PK DEFAULT gen_random_uuid()
+-- organization_id  uuid
+-- jobsite_id       uuid NOT NULL
+-- lot_id           uuid
+-- report_type      text NOT NULL
+-- title            text NOT NULL
+-- summary          text NOT NULL
+-- full_report      text NOT NULL
+-- sections         jsonb DEFAULT '[]'
+-- period_start     date NOT NULL
+-- period_end       date NOT NULL
+-- metrics          jsonb DEFAULT '{}'
+-- highlights       jsonb DEFAULT '[]'
+-- recommendations  jsonb DEFAULT '[]'
+-- ai_model         text
+-- ai_confidence    numeric
+-- generation_time_ms integer
+-- status           text DEFAULT 'generated'
+-- reviewed_by      uuid
+-- reviewed_at      timestamptz
+-- sent_to          jsonb DEFAULT '[]'
+-- created_at       timestamptz NOT NULL DEFAULT now()
+
+-- =============================================
+-- frm_lots (= "LOT 15", "LOT 22A" — reference for parsed lot numbers)
+-- =============================================
+-- id               uuid PK DEFAULT gen_random_uuid()
+-- organization_id  uuid
+-- jobsite_id       uuid NOT NULL
+-- lot_number       text NOT NULL
+-- block            text
+-- model            text
+-- address          text
+-- total_sqft       numeric
+-- sqft_main_floors numeric
+-- sqft_roof        numeric
+-- sqft_basement    numeric
+-- status           text DEFAULT 'pending'
+-- current_phase    text
+-- has_capping      boolean DEFAULT false
+-- blueprint_url    text
+-- priority_score   integer
+-- target_date      date
+-- closing_date     date
+-- buyer_name       text
+-- buyer_contact    text
+-- is_sold          boolean DEFAULT false
+-- released_at      timestamptz
+-- started_at       timestamptz
+-- completed_at     timestamptz
+-- notes            text
+-- coordinates      jsonb
+-- qr_code_data     text
+-- created_at       timestamptz DEFAULT now()
+-- updated_at       timestamptz DEFAULT now()
+-- is_issued        boolean DEFAULT false
+-- progress_percentage numeric DEFAULT 0
+-- schedule_notes   text
+-- issued_at        timestamptz
+-- issued_to_worker_id uuid
+-- issued_to_worker_name text
+-- registered_workers text[] DEFAULT '{}'

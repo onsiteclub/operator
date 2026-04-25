@@ -1,0 +1,95 @@
+# Standalone Codemagic pipeline for OnSite Operator (single-app repo).
+#
+# Env var groups (configure in Codemagic UI → App settings → Environment variables):
+#   supabase_credentials  → EXPO_PUBLIC_SUPABASE_URL, EXPO_PUBLIC_SUPABASE_ANON_KEY
+#
+# App Store Connect integration: "OnSite Calculator" — the .p8 with key id
+# MS9YHUWK8G is App-Manager + team-wide, so it grants access to every app in
+# the developer team including operator (ca.onsiteclub.operator2).
+
+workflows:
+
+  # ===========================================================================
+  # OPERATOR — iOS Release (manual dispatch)
+  # ===========================================================================
+  operator-ios-release:
+    name: Operator · iOS Release
+    max_build_duration: 90
+    instance_type: mac_mini_m2
+
+    integrations:
+      app_store_connect: OnSite Calculator
+
+    environment:
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: ca.onsiteclub.operator2
+      groups:
+        - supabase_credentials
+      vars:
+        XCODE_WORKSPACE: 'ios/OnSiteOperator2.xcworkspace'
+        XCODE_SCHEME: 'OnSiteOperator2'
+        BUNDLE_ID: 'ca.onsiteclub.operator2'
+      node: 20
+      cocoapods: default
+      xcode: latest
+
+    triggering:
+      events: []  # Manual dispatch only
+
+    scripts:
+      - name: Install Node dependencies
+        script: |
+          npm ci
+
+      - name: Write .env for Expo bundler
+        script: |
+          if [ -z "$EXPO_PUBLIC_SUPABASE_URL" ] || [ -z "$EXPO_PUBLIC_SUPABASE_ANON_KEY" ]; then
+            echo "::error:: Missing EXPO_PUBLIC_SUPABASE_URL or EXPO_PUBLIC_SUPABASE_ANON_KEY in supabase_credentials group"
+            exit 1
+          fi
+          printf 'EXPO_PUBLIC_SUPABASE_URL=%s\n' "$EXPO_PUBLIC_SUPABASE_URL" >  .env
+          printf 'EXPO_PUBLIC_SUPABASE_ANON_KEY=%s\n' "$EXPO_PUBLIC_SUPABASE_ANON_KEY" >> .env
+
+      - name: Expo prebuild (regenerate ios/)
+        script: |
+          npx expo prebuild --platform ios --clean --no-install
+
+      - name: CocoaPods install
+        script: |
+          cd ios
+          # --repo-update refreshes the trunk CDN spec cache so newly published
+          # podspecs (e.g. ReactAppDependencyProvider for RN 0.76) resolve.
+          pod install --repo-update
+
+      - name: Set up provisioning profiles
+        script: |
+          xcode-project use-profiles
+
+      - name: Increment build number
+        script: |
+          cd ios
+          agvtool new-version -all $(($BUILD_NUMBER + 1))
+
+      - name: Build IPA
+        script: |
+          xcode-project build-ipa \
+            --workspace "$XCODE_WORKSPACE" \
+            --scheme "$XCODE_SCHEME"
+
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+      - ios/build/*.dSYM
+
+    publishing:
+      # Uncomment after first successful build to push to TestFlight.
+      # app_store_connect:
+      #   auth: integration
+      #   submit_to_testflight: true
+      email:
+        recipients:
+          - cristony.bruno@gmail.com
+        notify:
+          success: true
+          failure: true
