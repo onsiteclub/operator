@@ -153,6 +153,7 @@ function DayDetailModal({
   onClose: () => void;
 }) {
   const addManualHours = useDailyLogStore((s) => s.addManualHours);
+  const updateDayLog = useDailyLogStore((s) => s.updateDayLog);
   const deleteDayLog = useDailyLogStore((s) => s.deleteDayLog);
 
   const [editing, setEditing] = useState(false);
@@ -271,20 +272,28 @@ function DayDetailModal({
     try {
       const firstEntry = formatTimeHHMM(entryTime);
       const lastExit = formatTimeHHMM(exitTime);
+      const trimmedNotes = notesText.trim();
 
-      // For existing rows, soft-delete first so upsertDailyHours (called by
-      // addManualHours) resurrects with the new values cleanly. For new
-      // rows, addManualHours just creates one. Then patch first_entry /
-      // last_exit since the store API doesn't expose those fields.
-      if (log) await deleteDayLog(dayKey);
-      await addManualHours({
-        date: dayKey,
-        totalMinutes,
-        breakMinutes,
-        locationName: log?.locationName || 'Operator',
-        notes: notesText.trim() || undefined,
-      });
-      await patchEntryExit(dayKey, firstEntry, lastExit);
+      if (log) {
+        await updateDayLog(dayKey, {
+          totalMinutes,
+          breakMinutes,
+          firstEntry,
+          lastExit,
+          // Empty string clears the column. undefined would leave it untouched.
+          notes: trimmedNotes,
+        });
+      } else {
+        await addManualHours({
+          date: dayKey,
+          totalMinutes,
+          breakMinutes,
+          firstEntry,
+          lastExit,
+          locationName: 'Operator',
+          notes: trimmedNotes || undefined,
+        });
+      }
 
       setEditing(false);
       onClose();
@@ -705,26 +714,6 @@ function Row({ label, value }: { label: string; value: string }) {
       <Text style={styles.rowValue}>{value}</Text>
     </View>
   );
-}
-
-// ============================================
-// PATCH first_entry / last_exit
-//
-// dailyLogStore.updateDayLog only exposes total/break/notes — we need
-// to write first_entry / last_exit too. Reach into the daily.ts CRUD
-// directly for that.
-// ============================================
-
-import { updateDailyHours } from '../../lib/database/daily';
-import { useAuthStore } from '../../stores/authStore';
-
-async function patchEntryExit(dateKey: string, firstEntry: string, lastExit: string): Promise<void> {
-  const userId = useAuthStore.getState().getUserId();
-  if (!userId) return;
-  updateDailyHours(userId, dateKey, { firstEntry, lastExit });
-  // Trigger a reload so the calendar picks up the new values right away.
-  void useDailyLogStore.getState().reloadToday();
-  void useDailyLogStore.getState().reloadWeek();
 }
 
 // ============================================

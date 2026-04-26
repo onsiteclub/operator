@@ -85,6 +85,8 @@ interface DailyLogState {
     locationId?: string;
     type?: DailyLogType;
     notes?: string;
+    firstEntry?: string;
+    lastExit?: string;
   }) => Promise<DailyLog | null>;
 
   updateDayLog: (
@@ -93,6 +95,8 @@ interface DailyLogState {
       totalMinutes?: number;
       breakMinutes?: number;
       notes?: string;
+      firstEntry?: string;
+      lastExit?: string;
     }
   ) => Promise<DailyLog | null>;
 
@@ -332,6 +336,8 @@ export const useDailyLogStore = create<DailyLogState>((set, get) => ({
         source: 'manual',
         type: params.type || 'work',
         notes: params.notes,
+        firstEntry: params.firstEntry,
+        lastExit: params.lastExit,
       });
 
       if (!result) {
@@ -361,6 +367,8 @@ export const useDailyLogStore = create<DailyLogState>((set, get) => ({
         totalMinutes: updates.totalMinutes,
         breakMinutes: updates.breakMinutes,
         notes: updates.notes,
+        firstEntry: updates.firstEntry,
+        lastExit: updates.lastExit,
         source: 'edited',
       });
 
