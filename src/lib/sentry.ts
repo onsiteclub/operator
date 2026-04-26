@@ -1,18 +1,22 @@
 /**
  * Sentry shim — operator app version.
  *
- * Timekeeper has full Sentry integration. Operator skips that for now;
- * this stub keeps timekeeper imports compiling so we don't have to edit
- * every file that calls captureMessage / addSentryBreadcrumb.
+ * Timekeeper has full Sentry integration. Operator skips that for now.
+ * Stubs match the timekeeper signature so ported code compiles unchanged.
  */
 
-type Severity = 'fatal' | 'error' | 'warning' | 'info' | 'debug';
+interface CaptureOptions {
+  level?: 'fatal' | 'error' | 'warning' | 'info' | 'debug';
+  tags?: Record<string, unknown>;
+  extra?: Record<string, unknown>;
+  contexts?: Record<string, unknown>;
+}
 
-export function captureMessage(_message: string, _level?: Severity, _context?: unknown): void {
+export function captureMessage(_message: string, _options?: CaptureOptions): void {
   // no-op
 }
 
-export function captureException(_error: unknown, _context?: unknown): void {
+export function captureException(_error: unknown, _options?: CaptureOptions): void {
   // no-op
 }
 

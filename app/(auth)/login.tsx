@@ -43,6 +43,7 @@ import { formatPhoneDisplay, normalizePhoneE164 } from '../../src/lib/format';
 import PhoneInputStep from '../../src/components/auth/PhoneInputStep';
 import OTPVerifyStep from '../../src/components/auth/OTPVerifyStep';
 import SetNewPasswordStep from '../../src/components/auth/SetNewPasswordStep';
+import { SocialButtons } from '../../src/components/auth/SocialButtons';
 
 const logoOnsite = require('../../assets/onsite-club-logo.png');
 
@@ -416,6 +417,17 @@ export default function LoginScreen() {
             )}
           </TouchableOpacity>
 
+          <View style={styles.divider}>
+            <View style={styles.dividerLine} />
+            <Text style={styles.dividerText}>or</Text>
+            <View style={styles.dividerLine} />
+          </View>
+
+          <SocialButtons
+            disabled={isLoading}
+            onError={(msg) => setError(msg)}
+          />
+
           <View style={styles.toggleRow}>
             <Text style={styles.toggleText}>
               {isSignup ? 'Already have an account?' : "Don't have an account?"}
@@ -518,6 +530,23 @@ const styles = StyleSheet.create({
   },
   buttonDisabled: { opacity: 0.6 },
   buttonText: { fontSize: 16, fontWeight: '600', color: colors.white },
+
+  divider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginVertical: 20,
+  },
+  dividerLine: {
+    flex: 1,
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: colors.border,
+  },
+  dividerText: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    fontWeight: '500',
+  },
 
   toggleRow: {
     flexDirection: 'row',

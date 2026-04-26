@@ -1,23 +1,26 @@
 /**
  * Auth Store - OnSite Operator
  *
- * Ported from onsite-timekeeper. Through Onda B this covers:
+ * Ported from onsite-timekeeper. Through Onda C this covers:
  *   - email/password sign-in + sign-up
  *   - profile completion (full_name in user_metadata + profiles row)
  *   - phone OTP verification on signup (parked session pattern)
  *   - password reset by phone OTP
+ *   - Google + Apple social sign-in (native on iOS/Android, OAuth
+ *     redirect on web)
  *
  * Deferred:
- *   - OAuth (Google / Apple)       → Onda C
  *   - Account deletion / data wipe → optional later
  *
- * Twilio must be configured in this Supabase project for the OTP
- * paths to actually deliver SMS. Without it the supabase.auth.* calls
- * surface a clear error which the UI shows to the user.
+ * Required external configuration:
+ *   - Twilio in Supabase Auth → Providers → Phone for OTP delivery.
+ *   - Google OAuth client IDs (web + iOS) in app.json `extra` and
+ *     Supabase Auth → Providers → Google.
+ *   - Apple Sign In capability in the Apple Developer portal +
+ *     Supabase Auth → Providers → Apple.
  *
  * The store keeps the same shape downstream consumers (dailyLogStore,
- * syncStore, invoiceStore) rely on, so this stays a drop-in
- * replacement for the older shim.
+ * syncStore, invoiceStore) rely on.
  */
 
 import { create } from 'zustand';
@@ -94,6 +97,10 @@ export interface AuthState {
   verifyResetOtp: (phone: string, token: string) => Promise<{ error: string | null }>;
   updatePasswordAfterReset: (newPassword: string) => Promise<{ error: string | null }>;
   clearOtpState: () => void;
+
+  // OAuth (Google / Apple)
+  signInWithGoogle: () => Promise<{ success: boolean; error?: string; cancelled?: boolean }>;
+  signInWithApple: () => Promise<{ success: boolean; error?: string; cancelled?: boolean }>;
 
   // Helpers
   getUserId: () => string | null;
@@ -342,6 +349,16 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     set({ isLoading: true });
 
     try {
+      // Clear the cached Google credential so the next sign-in shows the
+      // account picker. Lazy-imported to keep the OAuth deps out of the
+      // bundle until they're actually used.
+      try {
+        const { signOutFromGoogle } = await import('../lib/oauth');
+        await signOutFromGoogle();
+      } catch {
+        // non-fatal — keep going with Supabase signout
+      }
+
       if (isSupabaseConfigured()) {
         await supabase.auth.signOut();
       }
@@ -653,6 +670,52 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       otpResendCount: 0,
       otpResendCooldownEnd: null,
     });
+  },
+
+  // ============================================
+  // OAUTH (Google / Apple)
+  // ============================================
+
+  signInWithGoogle: async () => {
+    set({ isLoading: true, error: null });
+    try {
+      const { signInWithGoogle } = await import('../lib/oauth');
+      const result = await signInWithGoogle();
+      if (result.success) {
+        // onAuthStateChange commits the session — pendingPhoneVerification
+        // is false here, so the SIGNED_IN handler doesn't ignore it.
+        await get().checkProfile();
+        set({ isLoading: false });
+        return result;
+      }
+      set({ isLoading: false, error: result.error ?? null });
+      return result;
+    } catch (e) {
+      const errorMsg = String(e);
+      logger.error('auth', 'signInWithGoogle exception', { error: errorMsg });
+      set({ isLoading: false, error: errorMsg });
+      return { success: false, error: errorMsg };
+    }
+  },
+
+  signInWithApple: async () => {
+    set({ isLoading: true, error: null });
+    try {
+      const { signInWithApple } = await import('../lib/oauth');
+      const result = await signInWithApple();
+      if (result.success) {
+        await get().checkProfile();
+        set({ isLoading: false });
+        return result;
+      }
+      set({ isLoading: false, error: result.error ?? null });
+      return result;
+    } catch (e) {
+      const errorMsg = String(e);
+      logger.error('auth', 'signInWithApple exception', { error: errorMsg });
+      set({ isLoading: false, error: errorMsg });
+      return { success: false, error: errorMsg };
+    }
   },
 
   getUserId: () => get().user?.id ?? null,

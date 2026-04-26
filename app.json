@@ -16,6 +16,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "ca.onsiteclub.operator2",
+      "usesAppleSignIn": true,
       "infoPlist": {
         "NSPrivacyManifestURL": "https://onsiteclub.ca/legal/operator/privacy.html"
       }
@@ -35,6 +36,7 @@
     "plugins": [
       "expo-router",
       "expo-secure-store",
+      "expo-apple-authentication",
       ["expo-build-properties", {
         "android": {
           "kotlinVersion": "1.9.25",
@@ -42,8 +44,15 @@
           "targetSdkVersion": 35,
           "minSdkVersion": 24
         }
+      }],
+      ["@react-native-google-signin/google-signin", {
+        "iosUrlScheme": "com.googleusercontent.apps.REPLACE_WITH_REVERSED_IOS_CLIENT_ID"
       }]
     ],
+    "extra": {
+      "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "",
+      "EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID": ""
+    },
     "experiments": {
       "typedRoutes": true
     }
