@@ -11,6 +11,8 @@ import {
   Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { colors, spacing, borderRadius, typography } from '@onsite/tokens';
 import { supabase } from '../../src/lib/supabase';
 import { TimesheetSection } from '../../src/screens/timesheet/TimesheetSection';
@@ -33,6 +35,7 @@ interface ArchivedReport {
 }
 
 export default function ReportsScreen() {
+  const router = useRouter();
   const [today, setToday] = useState<TodayStats>({ delivered: 0, pending: 0, alerts: 0 });
   const [archive, setArchive] = useState<ArchivedReport[]>([]);
   const [loading, setLoading] = useState(true);
@@ -115,6 +118,13 @@ export default function ReportsScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.header}>
         <Text style={styles.title}>Reports</Text>
+        <Pressable
+          onPress={() => router.push('/business-profile')}
+          hitSlop={10}
+          accessibilityLabel="Business profile"
+        >
+          <Ionicons name="settings-outline" size={22} color={colors.textSecondary} />
+        </Pressable>
       </View>
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
@@ -191,6 +201,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.md,
     paddingBottom: spacing.sm,

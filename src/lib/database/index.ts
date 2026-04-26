@@ -34,6 +34,29 @@ export {
 } from './core';
 
 // ============================================
+// BUSINESS PROFILE
+// ============================================
+
+export {
+  // CRUD
+  getBusinessProfile,
+  upsertBusinessProfile,
+  deleteBusinessProfile,
+  incrementInvoiceNumber,
+  // Validation
+  validateEmail,
+  validateCanadianPhone,
+  validatePostalCode,
+  formatPostalCode,
+  // Sync
+  getUnsyncedBusinessProfile,
+  markBusinessProfileSynced,
+  upsertBusinessProfileFromSync,
+  // Types
+  type UpsertBusinessProfileParams,
+} from './businessProfile';
+
+// ============================================
 // DAILY HOURS
 // ============================================
 
