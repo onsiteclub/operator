@@ -115,10 +115,37 @@ export default function RequestsScreen() {
     }
   };
 
+  const handleUnavailable = (id: string) => {
+    Alert.alert(
+      'Material unavailable?',
+      'The worker will be notified that this material isn\'t available right now and the request will leave the queue.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Mark unavailable',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const { error } = await supabase.functions.invoke('mark-unavailable', {
+                body: { request_id: id },
+              });
+              if (error) throw error;
+              fetchRequests();
+            } catch (err) {
+              console.error('mark-unavailable failed:', err);
+              Alert.alert('Error', 'Failed to mark as unavailable');
+            }
+          },
+        },
+      ],
+    );
+  };
+
   const queueItems = useMemo(
     () => requests.filter(
       (r) => r.status !== 'delivered'
         && r.status !== 'cancelled'
+        && r.status !== 'unavailable'
         && r.status !== 'awaiting_info',
     ),
     [requests],
@@ -215,6 +242,7 @@ export default function RequestsScreen() {
               <RequestCard
                 request={item}
                 onDeliver={handleDeliver}
+                onUnavailable={handleUnavailable}
                 onOpenAI={() => setAiModalRequest(item)}
                 showDeliverButton={activeTab === 'queue'}
                 otherOpenCount={Math.max(totalOpen - 1, 0)}
@@ -235,12 +263,14 @@ export default function RequestsScreen() {
 function RequestCard({
   request: req,
   onDeliver,
+  onUnavailable,
   onOpenAI,
   showDeliverButton,
   otherOpenCount,
 }: {
   request: IncomingRequest;
   onDeliver: (id: string) => void;
+  onUnavailable: (id: string) => void;
   onOpenAI: () => void;
   showDeliverButton: boolean;
   otherOpenCount: number;
@@ -412,14 +442,24 @@ function RequestCard({
             {new Date(req.delivered_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
           </Text>
         ) : showDeliverButton ? (
-          <Pressable
-            style={[styles.iconBtn, styles.deliverIconBtn]}
-            onPress={() => onDeliver(req.id)}
-            hitSlop={8}
-            accessibilityLabel="Mark delivered"
-          >
-            <Text style={styles.deliverIconText}>✓</Text>
-          </Pressable>
+          <View style={styles.rightActions}>
+            <Pressable
+              style={[styles.iconBtn, styles.unavailableIconBtn]}
+              onPress={() => onUnavailable(req.id)}
+              hitSlop={8}
+              accessibilityLabel="Mark unavailable"
+            >
+              <Text style={styles.unavailableIconText}>✗</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.iconBtn, styles.deliverIconBtn]}
+              onPress={() => onDeliver(req.id)}
+              hitSlop={8}
+              accessibilityLabel="Mark delivered"
+            >
+              <Text style={styles.deliverIconText}>✓</Text>
+            </Pressable>
+          </View>
         ) : null}
       </View>
     </View>
@@ -757,6 +797,10 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accent + '22',
   },
   iconBtnText: { fontSize: 20, color: colors.text },
+  rightActions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
   deliverIconBtn: {
     backgroundColor: colors.accent,
     borderColor: colors.accent,
@@ -765,6 +809,15 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '800',
     color: colors.background,
+  },
+  unavailableIconBtn: {
+    backgroundColor: 'transparent',
+    borderColor: colors.textSecondary,
+  },
+  unavailableIconText: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: colors.textSecondary,
   },
   deliveredTime: { fontSize: 13, color: colors.textSecondary },
 
