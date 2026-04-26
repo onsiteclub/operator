@@ -282,7 +282,7 @@ export async function signInWithApple(): Promise<OAuthResult> {
               last_name: credential.fullName.familyName || null,
             },
           });
-          await supabase.from('profiles').upsert(
+          await supabase.from('core_profiles').upsert(
             {
               id: data.user.id,
               email: data.user.email,

@@ -415,7 +415,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
       // Fallback: profiles view
       const { data, error } = await supabase
-        .from('profiles')
+        .from('core_profiles')
         .select('full_name')
         .eq('id', user.id)
         .single();
@@ -457,9 +457,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
     try {
       const { error: profileError } = await supabase
-        .from('profiles')
+        .from('core_profiles')
         .upsert(
-          { id: user.id, email: user.email, full_name: fullName },
+          {
+            id: user.id,
+            email: user.email,
+            full_name: fullName,
+            first_name: firstName,
+            last_name: lastName,
+          },
           { onConflict: 'id' },
         );
 
@@ -531,7 +537,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       if (user) {
         const fullName = user.user_metadata?.full_name || null;
         try {
-          await supabase.from('profiles').upsert(
+          await supabase.from('core_profiles').upsert(
             {
               id: user.id,
               email: user.email,
