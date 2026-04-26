@@ -11,6 +11,7 @@ import { useOperatorStore } from '../src/store/operator';
 import { initDatabase } from '../src/lib/database';
 import { hydrateAuth } from '../src/stores/authStore';
 import { useDailyLogStore } from '../src/stores/dailyLogStore';
+import { useSyncStore } from '../src/stores/syncStore';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -37,20 +38,26 @@ function AppContent() {
   const segments = useSegments();
   const hydrate = useOperatorStore((s) => s.hydrate);
   const initDailyLog = useDailyLogStore((s) => s.initialize);
+  const initSync = useSyncStore((s) => s.initialize);
 
-  // Boot-time bring-up: persisted state + SQLite + auth shim + daily log store.
+  // Boot-time bring-up: persisted state + SQLite + auth shim + daily log store + sync.
   useEffect(() => {
     hydrate();
+    let teardown: (() => void) | undefined;
     (async () => {
       try {
         await initDatabase();
         await hydrateAuth();
         await initDailyLog();
+        teardown = await initSync();
       } catch (err) {
         console.error('[boot] timesheet init failed', err);
       }
     })();
-  }, [hydrate, initDailyLog]);
+    return () => {
+      if (teardown) teardown();
+    };
+  }, [hydrate, initDailyLog, initSync]);
 
   useEffect(() => {
     if (loading) return;
