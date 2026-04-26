@@ -45,6 +45,34 @@ export function getInitials(name: string): string {
   return name.slice(0, 2).toUpperCase();
 }
 
+// ============================================
+// PHONE FORMATTING (Canadian / North-American)
+// ============================================
+
+/** Format 10 digits as (XXX) XXX-XXXX for display */
+export function formatPhoneDisplay(digits: string): string {
+  const cleaned = digits.replace(/\D/g, '');
+  if (cleaned.length <= 3) return cleaned;
+  if (cleaned.length <= 6) return `(${cleaned.slice(0, 3)}) ${cleaned.slice(3)}`;
+  return `(${cleaned.slice(0, 3)}) ${cleaned.slice(3, 6)}-${cleaned.slice(6, 10)}`;
+}
+
+/** Normalize phone to E.164 format: +1XXXXXXXXXX */
+export function normalizePhoneE164(phone: string): string {
+  const cleaned = phone.replace(/\D/g, '');
+  if (cleaned.length === 11 && cleaned.startsWith('1')) return `+${cleaned}`;
+  if (cleaned.length === 10) return `+1${cleaned}`;
+  return `+${cleaned}`;
+}
+
+/** Mask phone for display: (XXX) ***-XXXX */
+export function maskPhone(phone: string): string {
+  const cleaned = phone.replace(/\D/g, '');
+  const digits = cleaned.length === 11 ? cleaned.slice(1) : cleaned;
+  if (digits.length < 10) return '***';
+  return `(${digits.slice(0, 3)}) ***-${digits.slice(6, 10)}`;
+}
+
 /** Standard break presets for time entry */
 export const BREAK_PRESETS = [
   { label: 'No break', value: 0 },

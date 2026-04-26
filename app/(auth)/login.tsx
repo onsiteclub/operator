@@ -1,11 +1,24 @@
 /**
- * Login + Signup screen — OnSite Operator
+ * Login flow — OnSite Operator
  *
- * Single screen with a Sign-in / Create-account toggle. Email + password
- * only (Onda A) — phone OTP and social login come in later waves.
+ * Multi-step state machine adapted from the timekeeper auth flow:
  *
- * Adapted from the timekeeper auth flow but flattened into a single
- * component since email/password is the only mode this wave ships.
+ *   signin → email + password
+ *     ↑                     ↘
+ *     ↑ (after reset done)    ↓ "Forgot password?"
+ *     ↑                       ↓
+ *     ↑                  forgot-phone (PhoneInputStep)
+ *     ↑                       ↓ resetPasswordWithPhone
+ *     ↑                  otp-reset (OTPVerifyStep, type=sms)
+ *     ↑                       ↓ verifyResetOtp
+ *     ↑                  new-password (SetNewPasswordStep)
+ *     ↑                       ↓ updatePasswordAfterReset
+ *     ↑                  ←————┘ (back to signin)
+ *
+ *   signup → email + password + first/last/phone
+ *     ↓ signUp({ phone })
+ *   otp-signup (OTPVerifyStep, type=phone_change)
+ *     ↓ verifyPhoneOtp → session committed → /(tabs) via auth gate
  */
 
 import { useState, useCallback } from 'react';
@@ -25,41 +38,61 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '@onsite/tokens';
 import { useAuthStore } from '../../src/stores/authStore';
+import { validateCanadianPhone } from '../../src/lib/database/businessProfile';
+import { formatPhoneDisplay, normalizePhoneE164 } from '../../src/lib/format';
+import PhoneInputStep from '../../src/components/auth/PhoneInputStep';
+import OTPVerifyStep from '../../src/components/auth/OTPVerifyStep';
+import SetNewPasswordStep from '../../src/components/auth/SetNewPasswordStep';
 
 const logoOnsite = require('../../assets/onsite-club-logo.png');
 
-type Mode = 'signin' | 'signup';
+type Step = 'signin' | 'signup' | 'otp-signup' | 'forgot-phone' | 'otp-reset' | 'new-password';
 
 export default function LoginScreen() {
   const signIn = useAuthStore((s) => s.signIn);
   const signUp = useAuthStore((s) => s.signUp);
+  const verifyPhoneOtp = useAuthStore((s) => s.verifyPhoneOtp);
+  const sendPhoneOtp = useAuthStore((s) => s.sendPhoneOtp);
+  const resetPasswordWithPhone = useAuthStore((s) => s.resetPasswordWithPhone);
+  const verifyResetOtp = useAuthStore((s) => s.verifyResetOtp);
+  const updatePasswordAfterReset = useAuthStore((s) => s.updatePasswordAfterReset);
+  const clearOtpState = useAuthStore((s) => s.clearOtpState);
 
-  const [mode, setMode] = useState<Mode>('signin');
+  const [step, setStep] = useState<Step>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
+  const [phone, setPhone] = useState(''); // 10-digit local
+  const [phoneE164, setPhoneE164] = useState(''); // +1XXXXXXXXXX, set after submit
+
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const isSignup = mode === 'signup';
+  // ============================================
+  // SIGN IN / SIGN UP
+  // ============================================
 
-  const validate = useCallback((): string | null => {
+  const isSignup = step === 'signup';
+
+  const validateCredentials = useCallback((): string | null => {
     if (!email.trim()) return 'Email is required';
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) return 'Invalid email format';
     if (!password) return 'Password is required';
     if (isSignup) {
-      if (password.length < 6) return 'Password must be at least 6 characters';
+      if (password.length < 8) return 'Password must be at least 8 characters';
       if (!firstName.trim()) return 'First name is required';
       if (!lastName.trim()) return 'Last name is required';
+      if (!phone) return 'Phone number is required';
+      if (!validateCanadianPhone(phone)) return 'Enter a valid 10-digit Canadian phone number';
     }
     return null;
-  }, [email, password, firstName, lastName, isSignup]);
+  }, [email, password, firstName, lastName, phone, isSignup]);
 
-  const handleSubmit = useCallback(async () => {
+  const handleCredentialsSubmit = useCallback(async () => {
     setError(null);
-    const validationError = validate();
+    const validationError = validateCredentials();
     if (validationError) {
       setError(validationError);
       return;
@@ -68,42 +101,169 @@ export default function LoginScreen() {
     setIsLoading(true);
     try {
       if (isSignup) {
+        const e164 = normalizePhoneE164(phone);
         const result = await signUp(email, password, {
           firstName: firstName.trim(),
           lastName: lastName.trim(),
+          phone: e164,
         });
         if (!result.success) {
           if (result.error === 'already_registered') {
             setError('An account with this email already exists. Sign in instead.');
-            setMode('signin');
+            setStep('signin');
           } else {
             setError(result.error || 'Could not create account');
           }
+          return;
+        }
+        if (result.needsPhoneVerification) {
+          setPhoneE164(e164);
+          setStep('otp-signup');
           return;
         }
         if (result.needsConfirmation) {
           Alert.alert(
             'Check your email',
             'We sent you a confirmation link. Confirm your email and then sign in.',
-            [{ text: 'OK', onPress: () => setMode('signin') }],
+            [{ text: 'OK', onPress: () => setStep('signin') }],
           );
           return;
         }
-        // Signed up + signed in. The auth gate routes us forward.
+        // Logged in — auth gate routes us forward.
       } else {
         const result = await signIn(email, password);
         if (!result.success) {
           setError(result.error || 'Could not sign in');
           return;
         }
-        // Signed in. Auth gate handles routing.
+        // Auth gate handles routing.
       }
     } catch (e) {
       setError(String(e));
     } finally {
       setIsLoading(false);
     }
-  }, [validate, isSignup, signUp, signIn, email, password, firstName, lastName]);
+  }, [validateCredentials, isSignup, signUp, signIn, email, password, firstName, lastName, phone]);
+
+  // ============================================
+  // FORGOT PASSWORD
+  // ============================================
+
+  const handleForgotPhone = useCallback(async (e164: string): Promise<{ error: string | null }> => {
+    const result = await resetPasswordWithPhone(e164);
+    if (!result.error) {
+      setPhoneE164(e164);
+      setStep('otp-reset');
+    }
+    return result;
+  }, [resetPasswordWithPhone]);
+
+  const handleResetVerify = useCallback(async (token: string): Promise<{ error: string | null }> => {
+    const result = await verifyResetOtp(phoneE164, token);
+    if (!result.error) {
+      setStep('new-password');
+    }
+    return result;
+  }, [verifyResetOtp, phoneE164]);
+
+  const handleResetResend = useCallback(async (): Promise<{ error: string | null }> => {
+    return sendPhoneOtp(phoneE164);
+  }, [sendPhoneOtp, phoneE164]);
+
+  const handleSetNewPassword = useCallback(async (newPassword: string): Promise<{ error: string | null }> => {
+    const result = await updatePasswordAfterReset(newPassword);
+    if (!result.error) {
+      Alert.alert(
+        'Password updated',
+        'Sign in with your new password.',
+        [{ text: 'OK', onPress: () => {
+          clearOtpState();
+          setPassword('');
+          setStep('signin');
+        }}],
+      );
+    }
+    return result;
+  }, [updatePasswordAfterReset, clearOtpState]);
+
+  // ============================================
+  // SIGNUP OTP
+  // ============================================
+
+  const handleSignupOtpVerify = useCallback(async (token: string): Promise<{ error: string | null }> => {
+    return verifyPhoneOtp(phoneE164, token);
+  }, [verifyPhoneOtp, phoneE164]);
+
+  const handleSignupOtpResend = useCallback(async (): Promise<{ error: string | null }> => {
+    return sendPhoneOtp(phoneE164);
+  }, [sendPhoneOtp, phoneE164]);
+
+  const handleSignupOtpBack = useCallback(() => {
+    clearOtpState();
+    setStep('signup');
+  }, [clearOtpState]);
+
+  // ============================================
+  // RENDER — STEP DELEGATION
+  // ============================================
+
+  if (step === 'forgot-phone') {
+    return (
+      <PhoneInputStep
+        onSubmit={handleForgotPhone}
+        onBack={() => setStep('signin')}
+        isLoading={isLoading}
+        setIsLoading={setIsLoading}
+      />
+    );
+  }
+
+  if (step === 'otp-signup') {
+    return (
+      <OTPVerifyStep
+        phone={phoneE164}
+        title="Verify your phone"
+        onVerify={handleSignupOtpVerify}
+        onResend={handleSignupOtpResend}
+        onBack={handleSignupOtpBack}
+        isLoading={isLoading}
+        setIsLoading={setIsLoading}
+      />
+    );
+  }
+
+  if (step === 'otp-reset') {
+    return (
+      <OTPVerifyStep
+        phone={phoneE164}
+        title="Verify your phone"
+        subtitle={undefined}
+        onVerify={handleResetVerify}
+        onResend={handleResetResend}
+        onBack={() => {
+          clearOtpState();
+          setStep('forgot-phone');
+        }}
+        isLoading={isLoading}
+        setIsLoading={setIsLoading}
+      />
+    );
+  }
+
+  if (step === 'new-password') {
+    return (
+      <SetNewPasswordStep
+        onSubmit={handleSetNewPassword}
+        onBack={() => setStep('signin')}
+        isLoading={isLoading}
+        setIsLoading={setIsLoading}
+      />
+    );
+  }
+
+  // ============================================
+  // RENDER — SIGN IN / SIGN UP FORM
+  // ============================================
 
   return (
     <KeyboardAvoidingView
@@ -179,19 +339,41 @@ export default function LoginScreen() {
             />
           </View>
 
+          {isSignup ? (
+            <View style={styles.inputContainer}>
+              <Text style={styles.label}>Phone (Canada)</Text>
+              <View style={styles.phoneContainer}>
+                <View style={styles.phonePrefix}>
+                  <Text style={styles.phonePrefixText}>+1</Text>
+                </View>
+                <TextInput
+                  style={styles.phoneInput}
+                  placeholder="(514) 555-1234"
+                  placeholderTextColor={colors.textTertiary}
+                  keyboardType="phone-pad"
+                  autoComplete="tel"
+                  value={formatPhoneDisplay(phone)}
+                  onChangeText={(t) => setPhone(t.replace(/\D/g, '').slice(0, 10))}
+                  editable={!isLoading}
+                  maxLength={14}
+                />
+              </View>
+            </View>
+          ) : null}
+
           <View style={styles.inputContainer}>
             <Text style={styles.label}>Password</Text>
-            <View style={styles.passwordRow}>
+            <View style={styles.passwordContainer}>
               <TextInput
-                style={[styles.input, { flex: 1 }]}
-                placeholder={isSignup ? 'Min. 6 characters' : 'Your password'}
+                style={styles.passwordInput}
+                placeholder={isSignup ? 'Min. 8 characters' : 'Your password'}
                 placeholderTextColor={colors.textTertiary}
                 secureTextEntry={!showPassword}
                 autoComplete={isSignup ? 'new-password' : 'current-password'}
                 value={password}
                 onChangeText={setPassword}
                 editable={!isLoading}
-                onSubmitEditing={handleSubmit}
+                onSubmitEditing={handleCredentialsSubmit}
                 returnKeyType={isSignup ? 'next' : 'go'}
               />
               <TouchableOpacity
@@ -208,18 +390,29 @@ export default function LoginScreen() {
             </View>
           </View>
 
+          {!isSignup ? (
+            <TouchableOpacity
+              style={styles.forgotBtn}
+              onPress={() => {
+                setError(null);
+                setStep('forgot-phone');
+              }}
+              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+            >
+              <Text style={styles.forgotText}>Forgot password?</Text>
+            </TouchableOpacity>
+          ) : null}
+
           <TouchableOpacity
             style={[styles.button, isLoading && styles.buttonDisabled]}
-            onPress={handleSubmit}
+            onPress={handleCredentialsSubmit}
             disabled={isLoading}
             activeOpacity={0.8}
           >
             {isLoading ? (
               <ActivityIndicator size="small" color={colors.white} />
             ) : (
-              <Text style={styles.buttonText}>
-                {isSignup ? 'Create account' : 'Sign in'}
-              </Text>
+              <Text style={styles.buttonText}>{isSignup ? 'Create account' : 'Sign in'}</Text>
             )}
           </TouchableOpacity>
 
@@ -230,13 +423,11 @@ export default function LoginScreen() {
             <TouchableOpacity
               onPress={() => {
                 setError(null);
-                setMode(isSignup ? 'signin' : 'signup');
+                setStep(isSignup ? 'signin' : 'signup');
               }}
               hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
             >
-              <Text style={styles.toggleLink}>
-                {isSignup ? 'Sign in' : 'Create one'}
-              </Text>
+              <Text style={styles.toggleLink}>{isSignup ? 'Sign in' : 'Create one'}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -282,8 +473,38 @@ const styles = StyleSheet.create({
     color: colors.text,
     backgroundColor: colors.backgroundTertiary,
   },
-  passwordRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  eyeBtn: { padding: 8 },
+
+  phoneContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 12,
+    backgroundColor: colors.backgroundTertiary,
+  },
+  phonePrefix: { paddingLeft: 16, paddingVertical: 14 },
+  phonePrefixText: { fontSize: 16, fontWeight: '600', color: colors.textSecondary },
+  phoneInput: { flex: 1, paddingHorizontal: 8, paddingVertical: 14, fontSize: 16, color: colors.text },
+
+  passwordContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 12,
+    backgroundColor: colors.backgroundTertiary,
+  },
+  passwordInput: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    fontSize: 16,
+    color: colors.text,
+  },
+  eyeBtn: { paddingHorizontal: 16, paddingVertical: 14 },
+
+  forgotBtn: { alignSelf: 'flex-end', marginTop: -8, marginBottom: 8 },
+  forgotText: { fontSize: 13, color: colors.primary, fontWeight: '600' },
 
   button: {
     flexDirection: 'row',
