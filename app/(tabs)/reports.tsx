@@ -7,12 +7,13 @@
 
 import { useEffect, useCallback, useState } from 'react';
 import {
-  View, Text, StyleSheet, FlatList, Pressable, ActivityIndicator,
+  View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator,
   Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, spacing, borderRadius, typography } from '@onsite/tokens';
 import { supabase } from '../../src/lib/supabase';
+import { TimesheetSection } from '../../src/screens/timesheet/TimesheetSection';
 
 interface TodayStats {
   delivered: number;
@@ -116,7 +117,7 @@ export default function ReportsScreen() {
         <Text style={styles.title}>Reports</Text>
       </View>
 
-      <View style={styles.content}>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         {/* Today Card */}
         <View style={styles.todayCard}>
           <View style={styles.todayHeader}>
@@ -132,6 +133,9 @@ export default function ReportsScreen() {
           </View>
         </View>
 
+        {/* Timesheet (Phase 2) */}
+        <TimesheetSection />
+
         {/* Archive */}
         <Text style={styles.sectionLabel}>ARCHIVE</Text>
         {archive.length === 0 ? (
@@ -140,32 +144,29 @@ export default function ReportsScreen() {
             <Text style={styles.emptyHint}>Daily reports will appear here automatically</Text>
           </View>
         ) : (
-          <FlatList
-            data={archive}
-            keyExtractor={(item) => item.id}
-            renderItem={({ item }) => {
-              const d = item.summary_json;
-              return (
-                <Pressable
-                  style={styles.archiveRow}
-                  onPress={() => item.pdf_url && openPdf(item.pdf_url)}
-                  disabled={!item.pdf_url}
-                >
-                  <View>
-                    <Text style={styles.archiveDate}>{item.report_date}</Text>
-                    <Text style={styles.archiveStats}>
-                      {d.delivered_count ?? 0} delivered · {d.alerts_count ?? 0} alerts
-                    </Text>
-                  </View>
-                  {item.pdf_url && (
-                    <Text style={styles.pdfLink}>PDF</Text>
-                  )}
-                </Pressable>
-              );
-            }}
-          />
+          archive.map((item) => {
+            const d = item.summary_json;
+            return (
+              <Pressable
+                key={item.id}
+                style={styles.archiveRow}
+                onPress={() => item.pdf_url && openPdf(item.pdf_url)}
+                disabled={!item.pdf_url}
+              >
+                <View>
+                  <Text style={styles.archiveDate}>{item.report_date}</Text>
+                  <Text style={styles.archiveStats}>
+                    {d.delivered_count ?? 0} delivered · {d.alerts_count ?? 0} alerts
+                  </Text>
+                </View>
+                {item.pdf_url && (
+                  <Text style={styles.pdfLink}>PDF</Text>
+                )}
+              </Pressable>
+            );
+          })
         )}
-      </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -198,9 +199,9 @@ const styles = StyleSheet.create({
     ...typography.screenTitle,
   },
   content: {
-    flex: 1,
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.md,
+    paddingBottom: spacing.xxl,
   },
   todayCard: {
     backgroundColor: colors.surface,
@@ -253,6 +254,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: colors.textSecondary,
     letterSpacing: 0.5,
+    marginTop: spacing.lg,
     marginBottom: spacing.sm,
   },
   empty: {

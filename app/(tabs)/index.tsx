@@ -19,8 +19,11 @@ import {
   Modal, RefreshControl, TextInput, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { colors, spacing, borderRadius, typography } from '@onsite/tokens';
+import { useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import { colors, spacing, borderRadius, typography, withOpacity } from '@onsite/tokens';
 import { supabase } from '../../src/lib/supabase';
+import { useOperatorStore } from '../../src/store/operator';
 
 interface IncomingRequest {
   id: string;
@@ -175,6 +178,8 @@ export default function RequestsScreen() {
         <Text style={styles.title}>Requests</Text>
       </View>
 
+      <OfflineShiftBanner />
+
       <View style={styles.tabBar}>
         <Pressable
           style={[styles.tab, activeTab === 'queue' && styles.tabActive]}
@@ -258,6 +263,30 @@ export default function RequestsScreen() {
         onClose={() => setAiModalRequest(null)}
       />
     </SafeAreaView>
+  );
+}
+
+function OfflineShiftBanner() {
+  const isOnline = useOperatorStore((s) => s.isOnline);
+  const router = useRouter();
+
+  const hour = new Date().getHours();
+  const inBusinessHours = hour >= 6 && hour < 18;
+
+  if (isOnline || !inBusinessHours) return null;
+
+  return (
+    <Pressable
+      style={styles.shiftBanner}
+      onPress={() => router.push('/(tabs)/machine')}
+      accessibilityLabel="You are offline — tap to start your shift"
+    >
+      <Ionicons name="alert-circle" size={20} color={colors.warning} />
+      <Text style={styles.shiftBannerText}>
+        You{'’'}re offline — open Machine to start your shift.
+      </Text>
+      <Ionicons name="chevron-forward" size={18} color={colors.warning} />
+    </Pressable>
   );
 }
 
@@ -590,6 +619,26 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.xs,
   },
   title: { ...typography.screenTitle },
+
+  shiftBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.sm,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    backgroundColor: withOpacity(colors.warning, 0.12),
+    borderWidth: 1,
+    borderColor: withOpacity(colors.warning, 0.4),
+    borderRadius: borderRadius.md,
+  },
+  shiftBannerText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.text,
+  },
 
   tabBar: {
     flexDirection: 'row',
