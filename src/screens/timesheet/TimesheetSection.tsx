@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View, Text, StyleSheet, Modal, Pressable, TextInput, ScrollView, Alert,
-  KeyboardAvoidingView, Platform,
+  KeyboardAvoidingView, Platform, useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, borderRadius, withOpacity } from '@onsite/tokens';
@@ -50,6 +50,12 @@ function hmToMinutes(hours: string, minutes: string): number {
 // ============================================
 
 export function TimesheetSection() {
+  const { width: windowWidth } = useWindowDimensions();
+  // Calendar lives inside reports.tsx (paddingHorizontal: spacing.lg = 24)
+  // and this component's own padding (spacing.md = 16). Calendar must fit
+  // window - 24*2 - 16*2 = window - 80 to render seven cells per row.
+  const calendarWidth = windowWidth - 80;
+
   const [currentMonth, setCurrentMonth] = useState(() => new Date());
   const [monthLogs, setMonthLogs] = useState<DailyLog[]>([]);
   const [selectedDayKey, setSelectedDayKey] = useState<string | null>(null);
@@ -101,6 +107,7 @@ export function TimesheetSection() {
         currentMonth={currentMonth}
         onMonthChange={setCurrentMonth}
         mode="single"
+        containerWidth={calendarWidth}
         getDayMinutes={(date) => minutesByDay.get(dayKeyFromDate(date)) || 0}
         getDayHasNote={(date) => notesByDay.has(dayKeyFromDate(date))}
         disableFutureDates

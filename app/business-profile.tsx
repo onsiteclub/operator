@@ -30,6 +30,9 @@ const PROVINCES = [
 export default function BusinessProfileScreen() {
   const router = useRouter();
   const userId = useAuthStore((s) => s.user?.id ?? null);
+  const userEmail = useAuthStore((s) => s.user?.email ?? null);
+  const userMeta = useAuthStore((s) => s.user?.user_metadata ?? null);
+  const cachedFullName = useAuthStore((s) => s.cachedFullName);
   const { profile, loadProfile, saveProfile, deleteProfile } = useBusinessProfileStore();
 
   // Form state
@@ -53,21 +56,32 @@ export default function BusinessProfileScreen() {
   }, [userId, loadProfile]);
 
   useEffect(() => {
-    if (!profile) return;
-    setBusinessName(profile.business_name || '');
-    setEmail(profile.email || '');
-    setPhone(profile.phone || '');
-    setAddressStreet(profile.address_street || '');
-    setAddressCity(profile.address_city || '');
-    setAddressProvince(profile.address_province || '');
-    setAddressPostalCode(profile.address_postal_code || '');
-    setBusinessNumber(profile.business_number || '');
-    setGstHstNumber(profile.gst_hst_number || '');
-    setHourlyRate(profile.default_hourly_rate?.toString() || '');
-    setTaxRate(profile.tax_rate?.toString() || '');
-    setNextInvoiceNumber(profile.next_invoice_number?.toString() || '1');
-    setHasChanges(false);
-  }, [profile]);
+    if (profile) {
+      // Existing profile — load saved values.
+      setBusinessName(profile.business_name || '');
+      setEmail(profile.email || '');
+      setPhone(profile.phone || '');
+      setAddressStreet(profile.address_street || '');
+      setAddressCity(profile.address_city || '');
+      setAddressProvince(profile.address_province || '');
+      setAddressPostalCode(profile.address_postal_code || '');
+      setBusinessNumber(profile.business_number || '');
+      setGstHstNumber(profile.gst_hst_number || '');
+      setHourlyRate(profile.default_hourly_rate?.toString() || '');
+      setTaxRate(profile.tax_rate?.toString() || '');
+      setNextInvoiceNumber(profile.next_invoice_number?.toString() || '1');
+      setHasChanges(false);
+      return;
+    }
+
+    // No saved profile yet — prefill from the authenticated user so the
+    // first invoice already has the right "From" info.
+    const metaName = (userMeta?.full_name as string | undefined)
+      || (cachedFullName ?? '')
+      || [userMeta?.first_name, userMeta?.last_name].filter(Boolean).join(' ');
+    if (metaName) setBusinessName(metaName);
+    if (userEmail) setEmail(userEmail);
+  }, [profile, userMeta, userEmail, cachedFullName]);
 
   const markChanged = <T extends string>(setter: (v: T) => void) => (value: T) => {
     setter(value);
@@ -75,8 +89,8 @@ export default function BusinessProfileScreen() {
   };
 
   const canSave = useMemo(
-    () => hasChanges && businessName.trim().length > 0,
-    [hasChanges, businessName],
+    () => businessName.trim().length > 0,
+    [businessName],
   );
 
   const handleSave = () => {
