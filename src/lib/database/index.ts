@@ -57,6 +57,54 @@ export {
 } from './businessProfile';
 
 // ============================================
+// CLIENTS
+// ============================================
+
+export {
+  getClients,
+  getClientByName,
+  getClientById,
+  upsertClient,
+  deleteClient,
+  type CreateClientParams,
+} from './clients';
+
+// ============================================
+// INVOICES
+// ============================================
+
+export {
+  // Read
+  getInvoice,
+  getAllInvoices,
+  getRecentInvoices,
+  getInvoiceItems,
+  // Aggregates
+  getThisMonthTotal,
+  getPendingTotal,
+  getOverdueTotal,
+  getThisMonthCount,
+  getPendingCount,
+  getDistinctClientNames,
+  // Create
+  createInvoice,
+  createInvoiceWithItems,
+  // Update
+  updateInvoiceStatus,
+  updateInvoice,
+  replaceInvoiceItems,
+  updateInvoicePdfUri,
+  deleteInvoice,
+  // Helpers
+  formatInvoiceNumber,
+  isOverdue,
+  // Types
+  type CreateInvoiceParams,
+  type CreateInvoiceItemParams,
+  type UpdateInvoiceParams,
+} from './invoices';
+
+// ============================================
 // DAILY HOURS
 // ============================================
 
