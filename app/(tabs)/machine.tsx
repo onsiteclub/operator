@@ -15,30 +15,41 @@ import { colors, withOpacity, spacing, borderRadius, typography } from '@onsite/
 import { useOperatorStore } from '../../src/store/operator';
 import { supabase } from '../../src/lib/supabase';
 import { OperatorNumberCard } from '../../src/components/OperatorNumberCard';
+import { useShiftToggle } from '../../src/hooks/useShiftToggle';
 
-const OFFLINE_REASONS = ['Broken', 'Low fuel', 'Maintenance', 'Shift end'];
+const OFFLINE_REASONS = ['Broken', 'Low fuel', 'Maintenance', 'Shift end'] as const;
+type OfflineReason = typeof OFFLINE_REASONS[number];
 
 export default function MachineScreen() {
   const store = useOperatorStore();
+  const shift = useShiftToggle();
   const [busy, setBusy] = useState(false);
+
+  const applyOfflineReason = (reason: OfflineReason) => {
+    if (reason === 'Shift end') {
+      shift.endShift();
+    } else {
+      store.setOffline(reason.toLowerCase());
+    }
+  };
 
   const handleGoOffline = () => {
     const options = [...OFFLINE_REASONS, 'Cancel'];
     if (Platform.OS === 'ios') {
       ActionSheetIOS.showActionSheetWithOptions(
         { options, cancelButtonIndex: options.length - 1, title: 'Reason for going offline' },
-        (idx) => { if (idx < OFFLINE_REASONS.length) store.setOffline(OFFLINE_REASONS[idx].toLowerCase()); },
+        (idx) => { if (idx < OFFLINE_REASONS.length) applyOfflineReason(OFFLINE_REASONS[idx]); },
       );
     } else {
       Alert.alert('Go Offline', 'Select reason', [
-        ...OFFLINE_REASONS.map((r) => ({ text: r, onPress: () => store.setOffline(r.toLowerCase()) })),
+        ...OFFLINE_REASONS.map((r) => ({ text: r, onPress: () => applyOfflineReason(r) })),
         { text: 'Cancel', style: 'cancel' },
       ]);
     }
   };
 
   const handleGoOnline = () => {
-    store.setOnline();
+    shift.startShift();
   };
 
   const handleAlert = async (type: 'low_fuel' | 'broken' | 'maintenance') => {

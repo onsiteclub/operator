@@ -8,6 +8,9 @@ import { colors } from '@onsite/tokens';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { supabase } from '../src/lib/supabase';
 import { useOperatorStore } from '../src/store/operator';
+import { initDatabase } from '../src/lib/database';
+import { hydrateAuth } from '../src/stores/authStore';
+import { useDailyLogStore } from '../src/stores/dailyLogStore';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -33,11 +36,21 @@ function AppContent() {
   const router = useRouter();
   const segments = useSegments();
   const hydrate = useOperatorStore((s) => s.hydrate);
+  const initDailyLog = useDailyLogStore((s) => s.initialize);
 
-  // Hydrate persisted operator state on mount
+  // Boot-time bring-up: persisted state + SQLite + auth shim + daily log store.
   useEffect(() => {
     hydrate();
-  }, [hydrate]);
+    (async () => {
+      try {
+        await initDatabase();
+        await hydrateAuth();
+        await initDailyLog();
+      } catch (err) {
+        console.error('[boot] timesheet init failed', err);
+      }
+    })();
+  }, [hydrate, initDailyLog]);
 
   useEffect(() => {
     if (loading) return;
