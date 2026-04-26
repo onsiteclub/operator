@@ -55,7 +55,10 @@ export default function ReportsScreen() {
     const requests = reqRes.data || [];
     const delivered = requests.filter((r) => r.status === 'delivered').length;
     const pending = requests.filter(
-      (r) => r.status !== 'delivered' && r.status !== 'cancelled' && r.status !== 'unavailable',
+      (r) => r.status !== 'delivered'
+        && r.status !== 'cancelled'
+        && r.status !== 'unavailable'
+        && r.status !== 'timed_out',
     ).length;
     const alerts = alertRes.data?.length || 0;
 

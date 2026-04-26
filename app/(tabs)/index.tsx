@@ -146,6 +146,7 @@ export default function RequestsScreen() {
       (r) => r.status !== 'delivered'
         && r.status !== 'cancelled'
         && r.status !== 'unavailable'
+        && r.status !== 'timed_out'
         && r.status !== 'awaiting_info',
     ),
     [requests],
