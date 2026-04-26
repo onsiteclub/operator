@@ -68,7 +68,7 @@ function isWithinRange(date: Date, start: Date | null, end: Date | null): boolea
 
 export default function InvoiceScreen() {
   const router = useRouter();
-  const userId = useAuthStore((s) => s.userId);
+  const userId = useAuthStore((s) => s.user?.id ?? null);
 
   const businessProfile = useBusinessProfileStore((s) => s.profile);
   const loadProfile = useBusinessProfileStore((s) => s.loadProfile);
@@ -174,7 +174,7 @@ export default function InvoiceScreen() {
 type WizardStep = 1 | 2 | 3;
 
 function HourlyWizard({ visible, onClose }: { visible: boolean; onClose: () => void }) {
-  const userId = useAuthStore((s) => s.userId);
+  const userId = useAuthStore((s) => s.user?.id ?? null);
   const businessProfile = useBusinessProfileStore((s) => s.profile);
   const invoiceStore = useInvoiceStore();
   const savedClients = useInvoiceStore((s) => s.clients);
@@ -517,7 +517,7 @@ function HourlyWizard({ visible, onClose }: { visible: boolean; onClose: () => v
 // ============================================
 
 function InvoiceDetailModal({ invoice, onClose }: { invoice: InvoiceDB | null; onClose: () => void }) {
-  const userId = useAuthStore((s) => s.userId);
+  const userId = useAuthStore((s) => s.user?.id ?? null);
   const [sharing, setSharing] = useState(false);
 
   if (!invoice) return null;

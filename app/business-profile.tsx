@@ -29,7 +29,7 @@ const PROVINCES = [
 
 export default function BusinessProfileScreen() {
   const router = useRouter();
-  const userId = useAuthStore((s) => s.userId);
+  const userId = useAuthStore((s) => s.user?.id ?? null);
   const { profile, loadProfile, saveProfile, deleteProfile } = useBusinessProfileStore();
 
   // Form state

@@ -8,9 +8,19 @@
 import { Platform } from 'react-native';
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '@onsite/tokens';
 
 export default function TabsLayout() {
+  const insets = useSafeAreaInsets();
+  // Bottom inset covers the Android gesture pill / 3-button nav bar.
+  // Fall back to a sensible minimum so the tab bar still has breathing room
+  // on devices with no inset.
+  const bottomInset = insets.bottom > 0
+    ? insets.bottom
+    : (Platform.OS === 'android' ? 8 : 24);
+  const tabBarHeight = (Platform.OS === 'android' ? 56 : 60) + bottomInset;
+
   return (
     <Tabs
       screenOptions={{
@@ -19,8 +29,8 @@ export default function TabsLayout() {
           backgroundColor: colors.tabBar,
           borderTopColor: colors.tabBarBorder,
           borderTopWidth: 1,
-          height: Platform.OS === 'android' ? 64 : 84,
-          paddingBottom: Platform.OS === 'android' ? 8 : 24,
+          height: tabBarHeight,
+          paddingBottom: bottomInset,
           paddingTop: 8,
         },
         tabBarActiveTintColor: colors.text,

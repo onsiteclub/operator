@@ -1,15 +1,27 @@
+/**
+ * Root layout — boots the SQLite + auth + sync stack and gates routing
+ * by auth state.
+ *
+ * Auth uses the local authStore (ported from onsite-timekeeper). The
+ * @onsite/auth shared package is no longer wired in.
+ *
+ * Routing rules:
+ *   - Loading              → ActivityIndicator
+ *   - Unauthenticated      → /(auth)/login
+ *   - Authenticated, no profile → /(auth)/complete-profile
+ *   - Authenticated + profile   → /(tabs)
+ */
+
 import { useEffect } from 'react';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { AuthProvider, useAuth } from '@onsite/auth';
 import { colors } from '@onsite/tokens';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { supabase } from '../src/lib/supabase';
 import { useOperatorStore } from '../src/store/operator';
 import { initDatabase } from '../src/lib/database';
-import { hydrateAuth } from '../src/stores/authStore';
+import { useAuthStore } from '../src/stores/authStore';
 import { useDailyLogStore } from '../src/stores/dailyLogStore';
 import { useSyncStore } from '../src/stores/syncStore';
 
@@ -22,56 +34,69 @@ const queryClient = new QueryClient({
 export default function RootLayout() {
   return (
     <SafeAreaProvider>
-      <AuthProvider supabase={supabase as never}>
-        <QueryClientProvider client={queryClient}>
-          <StatusBar style="dark" />
-          <AppContent />
-        </QueryClientProvider>
-      </AuthProvider>
+      <QueryClientProvider client={queryClient}>
+        <StatusBar style="dark" />
+        <AppContent />
+      </QueryClientProvider>
     </SafeAreaProvider>
   );
 }
 
 function AppContent() {
-  const { user, loading } = useAuth();
+  const session = useAuthStore((s) => s.session);
+  const isInitialized = useAuthStore((s) => s.isInitialized);
+  const isLoading = useAuthStore((s) => s.isLoading);
+  const profileComplete = useAuthStore((s) => s.profileComplete);
+  const initAuth = useAuthStore((s) => s.initialize);
+
   const router = useRouter();
   const segments = useSegments();
-  const hydrate = useOperatorStore((s) => s.hydrate);
+  const hydrateOperator = useOperatorStore((s) => s.hydrate);
   const initDailyLog = useDailyLogStore((s) => s.initialize);
   const initSync = useSyncStore((s) => s.initialize);
 
-  // Boot-time bring-up: persisted state + SQLite + auth shim + daily log store + sync.
+  // Boot sequence: persisted operator state + SQLite + auth + daily log + sync.
   useEffect(() => {
-    hydrate();
-    let teardown: (() => void) | undefined;
+    hydrateOperator();
+    let teardownSync: (() => void) | undefined;
     (async () => {
       try {
         await initDatabase();
-        await hydrateAuth();
+        await initAuth();
         await initDailyLog();
-        teardown = await initSync();
+        teardownSync = await initSync();
       } catch (err) {
-        console.error('[boot] timesheet init failed', err);
+        console.error('[boot] init failed', err);
       }
     })();
     return () => {
-      if (teardown) teardown();
+      if (teardownSync) teardownSync();
     };
-  }, [hydrate, initDailyLog, initSync]);
+  }, [hydrateOperator, initAuth, initDailyLog, initSync]);
 
+  // Auth gate: route based on session + profile state.
   useEffect(() => {
-    if (loading) return;
+    if (!isInitialized || isLoading) return;
 
     const inAuthGroup = segments[0] === '(auth)';
+    const onCompleteProfile = inAuthGroup && segments[1] === 'complete-profile';
 
-    if (!user && !inAuthGroup) {
-      router.replace('/(auth)/login');
-    } else if (user && inAuthGroup) {
-      router.replace('/(tabs)');
+    if (!session) {
+      if (!inAuthGroup) router.replace('/(auth)/login');
+      return;
     }
-  }, [loading, user, segments]);
 
-  if (loading) {
+    // Authenticated.
+    if (!profileComplete) {
+      if (!onCompleteProfile) router.replace('/(auth)/complete-profile');
+      return;
+    }
+
+    // Authenticated + profile complete — leave auth group.
+    if (inAuthGroup) router.replace('/(tabs)');
+  }, [isInitialized, isLoading, session, profileComplete, segments, router]);
+
+  if (!isInitialized) {
     return (
       <View style={styles.loading}>
         <ActivityIndicator size="large" color={colors.accent} />
