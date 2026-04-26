@@ -24,6 +24,8 @@ import {
   formatDuration,
   initDailyWebData,
 } from '../lib/database';
+// formatTimeHHMM is also re-exported from the daily module below — keeping
+// the existing import path so the rest of the file stays untouched.
 import {
   formatTimeHHMM,
   getDateString,
@@ -222,6 +224,37 @@ export const useDailyLogStore = create<DailyLogState>((set, get) => ({
         startTime,
       },
     });
+
+    // Persist first_entry to daily_hours so the day-detail modal can show
+    // "Started at HH:MM" even before the shift ends. We don't touch
+    // total_minutes — that only gets bumped on stopTracking via
+    // addMinutesToDay (which adds to whatever's there).
+    const userId = useAuthStore.getState().getUserId();
+    if (userId) {
+      const today = getToday();
+      const entryHHMM = formatTimeHHMM(startTime);
+      const existing = getDailyHours(userId, today);
+      if (!existing) {
+        // Create an empty row marking the entry time. total_minutes stays 0
+        // until stopTracking adds the elapsed amount.
+        upsertDailyHours({
+          userId,
+          date: today,
+          totalMinutes: 0,
+          firstEntry: entryHHMM,
+          locationName,
+          locationId,
+          source: 'manual',
+        });
+      } else if (!existing.first_entry) {
+        // Day exists but never had a first_entry — patch it without
+        // touching minutes / source.
+        updateDailyHours(userId, today, { firstEntry: entryHHMM });
+      }
+      // else: keep the original first_entry (e.g. operator started a second
+      // shift the same day; we want the FIRST one preserved).
+      void get().reloadToday();
+    }
 
     logger.info('dailyLog', `Tracking started: ${locationName} (at ${startTime.toISOString()})`);
   },

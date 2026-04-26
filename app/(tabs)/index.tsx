@@ -19,11 +19,11 @@ import {
   Modal, RefreshControl, TextInput, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, borderRadius, typography, withOpacity } from '@onsite/tokens';
 import { supabase } from '../../src/lib/supabase';
-import { useOperatorStore } from '../../src/store/operator';
+import { useShiftToggle } from '../../src/hooks/useShiftToggle';
+import { useDailyLogStore } from '../../src/stores/dailyLogStore';
 
 interface IncomingRequest {
   id: string;
@@ -176,9 +176,8 @@ export default function RequestsScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.header}>
         <Text style={styles.title}>Requests</Text>
+        <ShiftStatusChip />
       </View>
-
-      <OfflineShiftBanner />
 
       <View style={styles.tabBar}>
         <Pressable
@@ -266,26 +265,69 @@ export default function RequestsScreen() {
   );
 }
 
-function OfflineShiftBanner() {
-  const isOnline = useOperatorStore((s) => s.isOnline);
-  const router = useRouter();
+/**
+ * ShiftStatusChip — primary control for the operator's shift state.
+ * Sits in the Requests header (always visible). When offline, the chip
+ * is bright red so the operator can't miss it; tap → confirms and
+ * starts the shift. When online, the chip is green and shows live
+ * elapsed time; tap → confirms and ends the shift.
+ */
+function ShiftStatusChip() {
+  const { isOnline, isTracking, startShift, endShift } = useShiftToggle();
+  const getElapsed = useDailyLogStore((s) => s.getElapsedMinutes);
+  const dataVersion = useDailyLogStore((s) => s.dataVersion);
 
-  const hour = new Date().getHours();
-  const inBusinessHours = hour >= 6 && hour < 18;
+  // Tick once per minute so the elapsed time stays current. Cheap.
+  const [, forceTick] = useState(0);
+  useEffect(() => {
+    if (!isTracking) return;
+    const id = setInterval(() => forceTick((n) => n + 1), 60_000);
+    return () => clearInterval(id);
+  }, [isTracking]);
 
-  if (isOnline || !inBusinessHours) return null;
+  const handlePress = () => {
+    if (isOnline) {
+      Alert.alert(
+        'End shift?',
+        'Incoming SMS after this will get the auto-reply that the machine is down.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'End shift', style: 'destructive', onPress: endShift },
+        ],
+      );
+    } else {
+      startShift();
+    }
+  };
+
+  if (isOnline) {
+    void dataVersion;
+    const minutes = getElapsed();
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    const elapsedLabel = h > 0 ? `${h}h ${m}m` : `${m}m`;
+    return (
+      <Pressable
+        style={[styles.shiftChip, styles.shiftChipOnline]}
+        onPress={handlePress}
+        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        accessibilityLabel={`On clock ${elapsedLabel}. Tap to end shift`}
+      >
+        <View style={styles.shiftDot} />
+        <Text style={styles.shiftChipTextOnline}>{elapsedLabel}</Text>
+      </Pressable>
+    );
+  }
 
   return (
     <Pressable
-      style={styles.shiftBanner}
-      onPress={() => router.push('/(tabs)/machine')}
-      accessibilityLabel="You are offline — tap to start your shift"
+      style={[styles.shiftChip, styles.shiftChipOffline]}
+      onPress={handlePress}
+      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+      accessibilityLabel="You are offline. Tap to start your shift"
     >
-      <Ionicons name="alert-circle" size={20} color={colors.warning} />
-      <Text style={styles.shiftBannerText}>
-        You{'’'}re offline — open Machine to start your shift.
-      </Text>
-      <Ionicons name="chevron-forward" size={18} color={colors.warning} />
+      <Ionicons name="power" size={14} color={colors.white} />
+      <Text style={styles.shiftChipTextOffline}>Start shift</Text>
     </Pressable>
   );
 }
@@ -614,30 +656,47 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
   },
   header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.md,
     paddingBottom: spacing.xs,
   },
   title: { ...typography.screenTitle },
 
-  shiftBanner: {
+  shiftChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.sm,
-    marginHorizontal: spacing.lg,
-    marginBottom: spacing.sm,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
-    backgroundColor: withOpacity(colors.warning, 0.12),
-    borderWidth: 1,
-    borderColor: withOpacity(colors.warning, 0.4),
-    borderRadius: borderRadius.md,
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: borderRadius.full,
   },
-  shiftBannerText: {
-    flex: 1,
+  shiftChipOffline: {
+    backgroundColor: colors.error,
+  },
+  shiftChipOnline: {
+    backgroundColor: withOpacity(colors.success, 0.15),
+    borderWidth: 1,
+    borderColor: withOpacity(colors.success, 0.5),
+  },
+  shiftDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.success,
+  },
+  shiftChipTextOffline: {
     fontSize: 13,
-    fontWeight: '600',
-    color: colors.text,
+    fontWeight: '700',
+    color: colors.white,
+  },
+  shiftChipTextOnline: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.success,
+    fontVariant: ['tabular-nums'],
   },
 
   tabBar: {

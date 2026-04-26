@@ -1,13 +1,18 @@
 /**
- * Machine Status Screen — Operator 2
+ * Machine Status Screen — OnSite Operator
  *
- * Online/Offline toggle + 3 quick alert buttons.
- * Persists to AsyncStorage + syncs to Supabase.
+ * Read-only status card + 3 quick alert buttons (Low fuel, Broken,
+ * Maintenance). The Online/Offline toggle moved to the Requests
+ * header in R2 — the operator manages their shift from there.
+ *
+ * "Broken" still flips the operator state offline as a safety net
+ * (the auto-reply that the machine is down is the whole point of
+ * pressing Broken in the first place).
  */
 
 import { useState } from 'react';
 import {
-  View, Text, StyleSheet, Pressable, Alert, ActionSheetIOS, Platform,
+  View, Text, StyleSheet, Pressable, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -15,49 +20,18 @@ import { colors, withOpacity, spacing, borderRadius, typography } from '@onsite/
 import { useOperatorStore } from '../../src/store/operator';
 import { supabase } from '../../src/lib/supabase';
 import { OperatorNumberCard } from '../../src/components/OperatorNumberCard';
-import { useShiftToggle } from '../../src/hooks/useShiftToggle';
-
-const OFFLINE_REASONS = ['Broken', 'Low fuel', 'Maintenance', 'Shift end'] as const;
-type OfflineReason = typeof OFFLINE_REASONS[number];
 
 export default function MachineScreen() {
   const store = useOperatorStore();
-  const shift = useShiftToggle();
   const [busy, setBusy] = useState(false);
-
-  const applyOfflineReason = (reason: OfflineReason) => {
-    if (reason === 'Shift end') {
-      shift.endShift();
-    } else {
-      store.setOffline(reason.toLowerCase());
-    }
-  };
-
-  const handleGoOffline = () => {
-    const options = [...OFFLINE_REASONS, 'Cancel'];
-    if (Platform.OS === 'ios') {
-      ActionSheetIOS.showActionSheetWithOptions(
-        { options, cancelButtonIndex: options.length - 1, title: 'Reason for going offline' },
-        (idx) => { if (idx < OFFLINE_REASONS.length) applyOfflineReason(OFFLINE_REASONS[idx]); },
-      );
-    } else {
-      Alert.alert('Go Offline', 'Select reason', [
-        ...OFFLINE_REASONS.map((r) => ({ text: r, onPress: () => applyOfflineReason(r) })),
-        { text: 'Cancel', style: 'cancel' },
-      ]);
-    }
-  };
-
-  const handleGoOnline = () => {
-    shift.startShift();
-  };
 
   const handleAlert = async (type: 'low_fuel' | 'broken' | 'maintenance') => {
     if (busy) return;
     setBusy(true);
 
     try {
-      // Broken → also go offline
+      // Broken → also flip offline so the request-ingest auto-reply fires
+      // for incoming SMS until the operator (or supervisor) sorts it out.
       if (type === 'broken') {
         store.setOffline('broken');
       }
@@ -95,34 +69,22 @@ export default function MachineScreen() {
       </View>
 
       <View style={styles.content}>
-        {/* Operator's receiving number */}
         <OperatorNumberCard />
 
-        {/* Status Card */}
         <View style={[styles.statusCard, store.isOnline ? styles.statusOnline : styles.statusOffline]}>
           <View style={styles.statusLeft}>
             <View style={[styles.statusDot, { backgroundColor: store.isOnline ? colors.accent : colors.error }]} />
-            <View>
+            <View style={{ flex: 1 }}>
               <Text style={styles.statusTitle}>{store.isOnline ? 'Online' : 'Offline'}</Text>
-              <Text style={styles.statusSub}>
+              <Text style={styles.statusSub} numberOfLines={2}>
                 {store.isOnline
                   ? `Accepting requests since ${onlineSince}`
-                  : `Reason: ${store.machineDownReason || 'unknown'}`}
+                  : `Reason: ${store.machineDownReason || 'unknown'} · manage on Requests tab`}
               </Text>
             </View>
           </View>
-          <Pressable
-            style={[styles.toggleBtn, store.isOnline ? styles.toggleBtnOffline : styles.toggleBtnOnline]}
-            onPress={store.isOnline ? handleGoOffline : handleGoOnline}
-            disabled={busy}
-          >
-            <Text style={[styles.toggleBtnText, store.isOnline ? styles.toggleTextOffline : styles.toggleTextOnline]}>
-              {store.isOnline ? 'Go offline' : 'Go online'}
-            </Text>
-          </Pressable>
         </View>
 
-        {/* Quick Alerts */}
         <Text style={styles.sectionLabel}>QUICK ALERTS TO SUPERVISOR</Text>
 
         <Pressable style={styles.alertCard} onPress={() => handleAlert('low_fuel')} disabled={busy}>
@@ -155,7 +117,6 @@ export default function MachineScreen() {
           </View>
         </Pressable>
 
-        {/* Footer info */}
         <View style={styles.infoCard}>
           <Text style={styles.infoText}>
             <Text style={{ fontWeight: '700' }}>When offline:</Text> workers get "Machine is down
@@ -168,31 +129,24 @@ export default function MachineScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
+  container: { flex: 1, backgroundColor: colors.background },
   headerArea: {
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.md,
     paddingBottom: spacing.sm,
   },
-  title: {
-    ...typography.screenTitle,
-  },
-  subtitle: {
-    ...typography.meta,
-    marginTop: spacing.xs,
-  },
+  title: { ...typography.screenTitle },
+  subtitle: { ...typography.meta, marginTop: spacing.xs },
+
   content: {
     flex: 1,
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.md,
   },
+
   statusCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderRadius: borderRadius.lg,
@@ -210,17 +164,7 @@ const styles = StyleSheet.create({
   statusDot: { width: 16, height: 16, borderRadius: 8 },
   statusTitle: { fontSize: 17, fontWeight: '700', color: colors.text },
   statusSub: { fontSize: 13, color: colors.textSecondary, marginTop: 2 },
-  toggleBtn: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderWidth: 1,
-    borderRadius: borderRadius.sm,
-  },
-  toggleBtnOffline: { borderColor: colors.text, backgroundColor: colors.surface },
-  toggleBtnOnline: { borderColor: colors.accent, backgroundColor: colors.accentSoft },
-  toggleBtnText: { fontSize: 14, fontWeight: '600' },
-  toggleTextOffline: { color: colors.text },
-  toggleTextOnline: { color: colors.accent },
+
   sectionLabel: {
     fontSize: 12,
     fontWeight: '600',
@@ -250,6 +194,7 @@ const styles = StyleSheet.create({
   alertBody: { flex: 1 },
   alertTitle: { fontSize: 15, fontWeight: '600', color: colors.text },
   alertSub: { fontSize: 13, color: colors.textSecondary, marginTop: 2 },
+
   infoCard: {
     backgroundColor: colors.accentSoft,
     borderRadius: borderRadius.md,
