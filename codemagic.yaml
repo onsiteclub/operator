@@ -64,7 +64,7 @@ workflows:
 
       - name: Set up provisioning profiles
         script: |
-          xcode-project use-profiles --xcode-project-patterns "ios/*.xcodeproj"
+          xcode-project use-profiles --project "ios/*.xcodeproj"
 
       - name: Build IPA
         script: |
