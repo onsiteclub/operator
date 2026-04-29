@@ -1,13 +1,20 @@
 /**
  * Machine Status Screen — OnSite Operator
  *
- * Read-only status card + 3 quick alert buttons (Low fuel, Broken,
- * Maintenance). The Online/Offline toggle moved to the Requests
- * header in R2 — the operator manages their shift from there.
+ * Operator number card on top + 4 big square alert cards (2x2 grid)
+ * filling the bottom two-thirds of the screen. Cards are sized for
+ * gloved fingers — wide tap zones, large icons.
  *
- * "Broken" still flips the operator state offline as a safety net
- * (the auto-reply that the machine is down is the whole point of
- * pressing Broken in the first place).
+ * Alerts:
+ *   - Low fuel       → supervisor SMS, operator stays online
+ *   - Broken         → supervisor SMS + flips operator offline
+ *   - Maintenance    → supervisor SMS, operator stays online
+ *   - Going home     → fans out a friendly heads-up to every worker who
+ *                      texted today, asking them to send any pending
+ *                      requests now (uses send-to-worker per request).
+ *
+ * The shift toggle (Online/Offline) lives at the top of the Requests
+ * tab — the operator manages their shift from there.
  */
 
 import { useState } from 'react';
@@ -17,18 +24,113 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, withOpacity, spacing, borderRadius, typography } from '@onsite/tokens';
+import { useRouter } from 'expo-router';
 import { useOperatorStore } from '../../src/store/operator';
 import { supabase } from '../../src/lib/supabase';
 import { OperatorNumberCard } from '../../src/components/OperatorNumberCard';
+import { useSupervisorPhone } from '../../src/hooks/useSupervisorPhone';
+import { HeaderRow } from '../../src/components/ui/HeaderRow';
+
+const GOING_HOME_TEXT =
+  "Heads up — I'm heading home in about an hour. If you'll need any material, please send your request now so I can get it out before I leave. Thanks!";
+
+type AlertType = 'low_fuel' | 'broken' | 'maintenance' | 'going_home';
 
 export default function MachineScreen() {
+  const router = useRouter();
   const store = useOperatorStore();
   const [busy, setBusy] = useState(false);
+  const { phone: supervisorPhone, loaded: supervisorLoaded } = useSupervisorPhone();
+  const supervisorRequired = supervisorLoaded && !supervisorPhone;
 
-  const handleAlert = async (type: 'low_fuel' | 'broken' | 'maintenance') => {
+  const sendGoingHomeFanOut = async (operatorId: string) => {
+    // Find the LATEST open or recent request per worker today, so the
+    // heads-up message threads with their existing convo.
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    const { data: rows, error } = await supabase
+      .from('frm_material_requests')
+      .select('id, worker_phone, created_at')
+      .gte('created_at', todayStart.toISOString())
+      .not('worker_phone', 'is', null)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+
+    const latestByPhone = new Map<string, string>(); // phone → request_id
+    for (const row of rows || []) {
+      const phone = row.worker_phone as string | null;
+      if (!phone) continue;
+      if (!latestByPhone.has(phone)) latestByPhone.set(phone, row.id as string);
+    }
+
+    if (latestByPhone.size === 0) return 0;
+
+    const sends = Array.from(latestByPhone.values()).map((requestId) =>
+      supabase.functions.invoke('send-to-worker', {
+        body: { request_id: requestId, text: GOING_HOME_TEXT },
+      }),
+    );
+    const results = await Promise.allSettled(sends);
+    const sent = results.filter((r) => r.status === 'fulfilled').length;
+
+    // Record the alert for supervisor visibility
+    await supabase.from('frm_alerts').insert({
+      operator_id: operatorId,
+      type: 'going_home',
+      message: `Heads-up sent to ${sent} worker${sent === 1 ? '' : 's'}`,
+    });
+
+    return sent;
+  };
+
+  const handleAlert = async (type: AlertType) => {
     if (busy) return;
-    setBusy(true);
 
+    if (type === 'going_home') {
+      Alert.alert(
+        'Send heads-up to workers?',
+        'A friendly note will go to every worker who texted you today, asking them to send any pending requests before you leave.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Send',
+            onPress: async () => {
+              setBusy(true);
+              try {
+                const { data: { user } } = await supabase.auth.getUser();
+                if (!user) throw new Error('Not signed in');
+                const sent = await sendGoingHomeFanOut(user.id);
+                if (sent === 0) {
+                  Alert.alert('No workers to notify', 'Nobody texted you today.');
+                } else {
+                  Alert.alert('Heads-up sent', `Notified ${sent} worker${sent === 1 ? '' : 's'}.`);
+                }
+              } catch {
+                Alert.alert('Error', 'Could not send heads-up. Try again.');
+              } finally {
+                setBusy(false);
+              }
+            },
+          },
+        ],
+      );
+      return;
+    }
+
+    if (!supervisorPhone) {
+      Alert.alert(
+        'Add supervisor number',
+        'Add a supervisor phone number in Settings to send alerts.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Open Settings', onPress: () => router.push('/settings' as any) },
+        ],
+      );
+      return;
+    }
+
+    setBusy(true);
     try {
       // Broken → also flip offline so the request-ingest auto-reply fires
       // for incoming SMS until the operator (or supervisor) sorts it out.
@@ -41,6 +143,7 @@ export default function MachineScreen() {
       await supabase.from('frm_alerts').insert({
         operator_id: user?.id,
         type,
+        supervisor_phone: supervisorPhone,
         message: type === 'low_fuel'
           ? 'Low fuel — still working'
           : type === 'broken'
@@ -57,149 +160,170 @@ export default function MachineScreen() {
     }
   };
 
-  const onlineSince = store.availableSince
-    ? new Date(store.availableSince).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    : '--:--';
-
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <View style={styles.headerArea}>
-        <Text style={styles.title}>Machine status</Text>
-        <Text style={styles.subtitle}>Auto-replies depend on this</Text>
-      </View>
+      <HeaderRow title="Machine" />
 
-      <View style={styles.content}>
+      <View style={styles.topSection}>
         <OperatorNumberCard />
 
-        <View style={[styles.statusCard, store.isOnline ? styles.statusOnline : styles.statusOffline]}>
-          <View style={styles.statusLeft}>
-            <View style={[styles.statusDot, { backgroundColor: store.isOnline ? colors.accent : colors.error }]} />
-            <View style={{ flex: 1 }}>
-              <Text style={styles.statusTitle}>{store.isOnline ? 'Online' : 'Offline'}</Text>
-              <Text style={styles.statusSub} numberOfLines={2}>
-                {store.isOnline
-                  ? `Accepting requests since ${onlineSince}`
-                  : `Reason: ${store.machineDownReason || 'unknown'} · manage on Requests tab`}
-              </Text>
-            </View>
-          </View>
+        {supervisorRequired && (
+          <Pressable style={styles.supervisorBanner} onPress={() => router.push('/settings' as any)}>
+            <Ionicons name="warning-outline" size={18} color={colors.warningDark} />
+            <Text style={styles.supervisorBannerText}>
+              Add supervisor number in Settings
+            </Text>
+            <Ionicons name="chevron-forward" size={16} color={colors.warningDark} />
+          </Pressable>
+        )}
+
+        <Text style={styles.sectionLabel}>QUICK ALERTS</Text>
+      </View>
+
+      <View style={styles.grid}>
+        <View style={styles.gridRow}>
+          <AlertSquare
+            title="Low fuel"
+            subtitle="Supervisor gets text"
+            icon="water-outline"
+            tint={colors.amber}
+            onPress={() => handleAlert('low_fuel')}
+            disabled={busy}
+          />
+          <AlertSquare
+            title="Broken"
+            subtitle="Goes offline"
+            icon="alert-circle-outline"
+            tint={colors.error}
+            onPress={() => handleAlert('broken')}
+            disabled={busy}
+          />
         </View>
-
-        <Text style={styles.sectionLabel}>QUICK ALERTS TO SUPERVISOR</Text>
-
-        <Pressable style={styles.alertCard} onPress={() => handleAlert('low_fuel')} disabled={busy}>
-          <View style={[styles.alertIcon, { backgroundColor: withOpacity(colors.amber, 0.12) }]}>
-            <Ionicons name="water-outline" size={20} color={colors.amber} />
-          </View>
-          <View style={styles.alertBody}>
-            <Text style={styles.alertTitle}>Low fuel</Text>
-            <Text style={styles.alertSub}>Supervisor gets text, I keep working</Text>
-          </View>
-        </Pressable>
-
-        <Pressable style={styles.alertCard} onPress={() => handleAlert('broken')} disabled={busy}>
-          <View style={[styles.alertIcon, { backgroundColor: withOpacity(colors.error, 0.12) }]}>
-            <Ionicons name="alert-circle-outline" size={20} color={colors.error} />
-          </View>
-          <View style={styles.alertBody}>
-            <Text style={styles.alertTitle}>Broken down</Text>
-            <Text style={styles.alertSub}>Goes offline, auto-replies crew</Text>
-          </View>
-        </Pressable>
-
-        <Pressable style={styles.alertCard} onPress={() => handleAlert('maintenance')} disabled={busy}>
-          <View style={[styles.alertIcon, { backgroundColor: withOpacity(colors.info, 0.12) }]}>
-            <Ionicons name="build-outline" size={20} color={colors.info} />
-          </View>
-          <View style={styles.alertBody}>
-            <Text style={styles.alertTitle}>Need maintenance</Text>
-            <Text style={styles.alertSub}>Flags supervisor, I stay online</Text>
-          </View>
-        </Pressable>
-
-        <View style={styles.infoCard}>
-          <Text style={styles.infoText}>
-            <Text style={{ fontWeight: '700' }}>When offline:</Text> workers get "Machine is down
-            ({store.machineDownReason || 'reason'}). Orders will resume shortly." automatically.
-          </Text>
+        <View style={styles.gridRow}>
+          <AlertSquare
+            title="Maintenance"
+            subtitle="Flags supervisor"
+            icon="build-outline"
+            tint={colors.info}
+            onPress={() => handleAlert('maintenance')}
+            disabled={busy}
+          />
+          <AlertSquare
+            title="Going home"
+            subtitle="Heads-up to crew"
+            icon="walk-outline"
+            tint={colors.accent}
+            onPress={() => handleAlert('going_home')}
+            disabled={busy}
+          />
         </View>
       </View>
     </SafeAreaView>
   );
 }
 
+function AlertSquare({
+  title, subtitle, icon, tint, onPress, disabled,
+}: {
+  title: string;
+  subtitle: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  tint: string;
+  onPress: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <Pressable
+      style={({ pressed }) => [
+        styles.square,
+        { borderColor: withOpacity(tint, 0.4) },
+        pressed && { backgroundColor: withOpacity(tint, 0.08) },
+        disabled && { opacity: 0.5 },
+      ]}
+      onPress={onPress}
+      disabled={disabled}
+    >
+      <View style={[styles.squareIcon, { backgroundColor: withOpacity(tint, 0.12) }]}>
+        <Ionicons name={icon} size={36} color={tint} />
+      </View>
+      <Text style={styles.squareTitle}>{title}</Text>
+      <Text style={styles.squareSubtitle}>{subtitle}</Text>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  headerArea: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.md,
-    paddingBottom: spacing.sm,
-  },
-  title: { ...typography.screenTitle },
-  subtitle: { ...typography.meta, marginTop: spacing.xs },
 
-  content: {
-    flex: 1,
+  // Top third: number card + section label
+  topSection: {
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.md,
   },
-
-  statusCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderRadius: borderRadius.lg,
-    padding: spacing.md,
-    marginBottom: spacing.lg,
-  },
-  statusOnline: { borderColor: colors.accent },
-  statusOffline: { borderColor: colors.error },
-  statusLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    flex: 1,
-  },
-  statusDot: { width: 16, height: 16, borderRadius: 8 },
-  statusTitle: { fontSize: 17, fontWeight: '700', color: colors.text },
-  statusSub: { fontSize: 13, color: colors.textSecondary, marginTop: 2 },
-
   sectionLabel: {
     fontSize: 12,
     fontWeight: '600',
     color: colors.textSecondary,
     letterSpacing: 0.5,
-    marginBottom: spacing.sm,
+    marginTop: spacing.lg,
   },
-  alertCard: {
+  supervisorBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
+    gap: spacing.sm,
+    backgroundColor: colors.warningSoft,
     borderRadius: borderRadius.md,
-    padding: spacing.md,
-    marginBottom: spacing.sm,
-    minHeight: 64,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    marginTop: spacing.md,
   },
-  alertIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
+  supervisorBannerText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.warningDark,
+  },
+
+  // Bottom two-thirds: 2x2 grid
+  grid: {
+    flex: 1,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.lg,
+    gap: spacing.md,
+  },
+  gridRow: {
+    flex: 1,
+    flexDirection: 'row',
+    gap: spacing.md,
+  },
+  square: {
+    flex: 1,
+    backgroundColor: colors.surface,
+    borderWidth: 1.5,
+    borderRadius: borderRadius.lg,
+    padding: spacing.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+  },
+  squareIcon: {
+    width: 72,
+    height: 72,
+    borderRadius: 18,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: spacing.md,
   },
-  alertBody: { flex: 1 },
-  alertTitle: { fontSize: 15, fontWeight: '600', color: colors.text },
-  alertSub: { fontSize: 13, color: colors.textSecondary, marginTop: 2 },
-
-  infoCard: {
-    backgroundColor: colors.accentSoft,
-    borderRadius: borderRadius.md,
-    padding: spacing.md,
-    marginTop: spacing.sm,
+  squareTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: colors.text,
+    marginTop: 4,
+    textAlign: 'center',
   },
-  infoText: { fontSize: 13, color: colors.text, lineHeight: 20 },
+  squareSubtitle: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    textAlign: 'center',
+  },
 });

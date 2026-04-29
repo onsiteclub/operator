@@ -45,6 +45,17 @@ export function getInitials(name: string): string {
   return name.slice(0, 2).toUpperCase();
 }
 
+/** Get user initials from a full name, with fallback */
+export function getUserInitials(name: string | null | undefined, email?: string | null): string {
+  if (name?.includes(' ')) {
+    const p = name.split(' ');
+    return (p[0][0] + p[p.length - 1][0]).toUpperCase();
+  }
+  if (name) return name[0].toUpperCase();
+  if (email) return email[0].toUpperCase();
+  return '?';
+}
+
 // ============================================
 // PHONE FORMATTING (Canadian / North-American)
 // ============================================

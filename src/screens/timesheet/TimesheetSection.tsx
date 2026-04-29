@@ -143,7 +143,7 @@ export function TimesheetSection() {
 // DAY DETAIL MODAL
 // ============================================
 
-function DayDetailModal({
+export function DayDetailModal({
   dayKey,
   log,
   onClose,

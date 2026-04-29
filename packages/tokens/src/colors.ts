@@ -60,6 +60,14 @@ export const colors = {
   amber: '#C58B1B',
   amberSoft: '#FFF3D6',
   amberLine: '#F2D28B',
+  amberDark: '#D4A017',
+  amberSoftWarm: '#FFF8E7',
+
+  // Charcoal (used for primary CTAs in wizard flows)
+  charcoal: '#2C2C2A',
+
+  // Warm borders/dividers
+  borderWarm: '#D3D1C7',
 
   // ============================================
   // UTILITY GREEN (8-12%)

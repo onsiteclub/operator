@@ -24,6 +24,7 @@ import { colors, spacing, borderRadius, typography, withOpacity } from '@onsite/
 import { supabase } from '../../src/lib/supabase';
 import { useShiftToggle } from '../../src/hooks/useShiftToggle';
 import { useDailyLogStore } from '../../src/stores/dailyLogStore';
+import { HeaderRow } from '../../src/components/ui/HeaderRow';
 
 interface IncomingRequest {
   id: string;
@@ -174,9 +175,10 @@ export default function RequestsScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Requests</Text>
-        <ShiftStatusChip />
+      <HeaderRow title="Requests" />
+
+      <View style={styles.shiftCardWrap}>
+        <ShiftStatusCard />
       </View>
 
       <View style={styles.tabBar}>
@@ -266,13 +268,13 @@ export default function RequestsScreen() {
 }
 
 /**
- * ShiftStatusChip — primary control for the operator's shift state.
- * Sits in the Requests header (always visible). When offline, the chip
- * is bright red so the operator can't miss it; tap → confirms and
- * starts the shift. When online, the chip is green and shows live
- * elapsed time; tap → confirms and ends the shift.
+ * ShiftStatusCard — primary control for the operator's shift state.
+ * Sits at the top of the Requests screen above the queue/delivered tab
+ * bar. Replaces the read-only status card that lived on the Machine tab
+ * (operator stays on Requests 95% of the time, so the toggle belongs
+ * here). Tap card → confirms and toggles online/offline.
  */
-function ShiftStatusChip() {
+function ShiftStatusCard() {
   const { isOnline, isTracking, startShift, endShift } = useShiftToggle();
   const getElapsed = useDailyLogStore((s) => s.getElapsedMinutes);
   const dataVersion = useDailyLogStore((s) => s.dataVersion);
@@ -305,29 +307,38 @@ function ShiftStatusChip() {
     const minutes = getElapsed();
     const h = Math.floor(minutes / 60);
     const m = minutes % 60;
-    const elapsedLabel = h > 0 ? `${h}h ${m}m` : `${m}m`;
+    const elapsedLabel = h > 0 ? `${h}h ${m}m on clock` : `${m}m on clock`;
     return (
       <Pressable
-        style={[styles.shiftChip, styles.shiftChipOnline]}
+        style={[styles.shiftCard, styles.shiftCardOnline]}
         onPress={handlePress}
-        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-        accessibilityLabel={`On clock ${elapsedLabel}. Tap to end shift`}
+        accessibilityLabel={`Online ${elapsedLabel}. Tap to end shift`}
       >
-        <View style={styles.shiftDot} />
-        <Text style={styles.shiftChipTextOnline}>{elapsedLabel}</Text>
+        <View style={[styles.shiftCardDot, { backgroundColor: colors.success }]} />
+        <View style={{ flex: 1 }}>
+          <Text style={styles.shiftCardTitle}>Online</Text>
+          <Text style={styles.shiftCardSub}>Accepting requests · {elapsedLabel}</Text>
+        </View>
+        <Text style={styles.shiftCardAction}>End shift</Text>
       </Pressable>
     );
   }
 
   return (
     <Pressable
-      style={[styles.shiftChip, styles.shiftChipOffline]}
+      style={[styles.shiftCard, styles.shiftCardOffline]}
       onPress={handlePress}
-      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
       accessibilityLabel="You are offline. Tap to start your shift"
     >
-      <Ionicons name="power" size={14} color={colors.white} />
-      <Text style={styles.shiftChipTextOffline}>Start shift</Text>
+      <View style={[styles.shiftCardDot, { backgroundColor: colors.error }]} />
+      <View style={{ flex: 1 }}>
+        <Text style={styles.shiftCardTitle}>Offline</Text>
+        <Text style={styles.shiftCardSub}>SMS get the auto-reply · tap to start</Text>
+      </View>
+      <View style={styles.shiftStartBtn}>
+        <Ionicons name="power" size={14} color={colors.white} />
+        <Text style={styles.shiftStartBtnText}>Start shift</Text>
+      </View>
     </Pressable>
   );
 }
@@ -655,49 +666,48 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background,
   },
-  header: {
+  shiftCardWrap: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.sm,
+  },
+  shiftCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.md,
-    paddingBottom: spacing.xs,
+    gap: spacing.md,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderRadius: borderRadius.lg,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    minHeight: 64,
   },
-  title: { ...typography.screenTitle },
-
-  shiftChip: {
+  shiftCardOnline: { borderColor: colors.success },
+  shiftCardOffline: { borderColor: colors.error },
+  shiftCardDot: { width: 16, height: 16, borderRadius: 8 },
+  shiftCardTitle: { fontSize: 17, fontWeight: '700', color: colors.text },
+  shiftCardSub: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    marginTop: 2,
+    fontVariant: ['tabular-nums'],
+  },
+  shiftCardAction: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.error,
+    paddingHorizontal: spacing.sm,
+  },
+  shiftStartBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    backgroundColor: colors.error,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 8,
     borderRadius: borderRadius.full,
   },
-  shiftChipOffline: {
-    backgroundColor: colors.error,
-  },
-  shiftChipOnline: {
-    backgroundColor: withOpacity(colors.success, 0.15),
-    borderWidth: 1,
-    borderColor: withOpacity(colors.success, 0.5),
-  },
-  shiftDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: colors.success,
-  },
-  shiftChipTextOffline: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: colors.white,
-  },
-  shiftChipTextOnline: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: colors.success,
-    fontVariant: ['tabular-nums'],
-  },
+  shiftStartBtnText: { fontSize: 13, fontWeight: '700', color: colors.white },
 
   tabBar: {
     flexDirection: 'row',

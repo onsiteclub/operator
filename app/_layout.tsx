@@ -24,6 +24,7 @@ import { initDatabase } from '../src/lib/database';
 import { useAuthStore } from '../src/stores/authStore';
 import { useDailyLogStore } from '../src/stores/dailyLogStore';
 import { useSyncStore } from '../src/stores/syncStore';
+import { Snackbar } from '../src/components/ui/Snackbar';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -105,10 +106,13 @@ function AppContent() {
   }
 
   return (
-    <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="(auth)" />
-      <Stack.Screen name="(tabs)" />
-    </Stack>
+    <>
+      <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="(auth)" />
+        <Stack.Screen name="(tabs)" />
+      </Stack>
+      <Snackbar />
+    </>
   );
 }
 

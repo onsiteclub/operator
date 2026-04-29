@@ -48,12 +48,12 @@
         }
       }],
       ["@react-native-google-signin/google-signin", {
-        "iosUrlScheme": "com.googleusercontent.apps.REPLACE_WITH_REVERSED_IOS_CLIENT_ID"
+        "iosUrlScheme": "com.googleusercontent.apps.272025275406-aar0pieo7r3ju4qnurnoe8jfv7u1acb9"
       }]
     ],
     "extra": {
-      "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "",
-      "EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID": ""
+      "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "272025275406-ip4l64kd6gvohfq12ho2tfmgvja8br1t.apps.googleusercontent.com",
+      "EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID": "272025275406-aar0pieo7r3ju4qnurnoe8jfv7u1acb9.apps.googleusercontent.com"
     },
     "experiments": {
       "typedRoutes": true
