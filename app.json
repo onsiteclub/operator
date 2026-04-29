@@ -16,6 +16,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "ca.onsiteclub.operator2",
+      "buildNumber": "2",
       "usesAppleSignIn": true,
       "infoPlist": {
         "NSPrivacyManifestURL": "https://onsiteclub.ca/legal/operator/privacy.html"
@@ -26,7 +27,8 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#1F2937"
       },
-      "package": "ca.onsiteclub.operator2"
+      "package": "ca.onsiteclub.operator2",
+      "versionCode": 2
     },
     "web": {
       "bundler": "metro",
