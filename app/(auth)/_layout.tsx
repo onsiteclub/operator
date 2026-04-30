@@ -1,10 +1,11 @@
 /**
- * Auth Layout — Stack navigator for authentication screens.
- * Ported from onsite-timekeeper.
+ * Auth Layout
+ * Stack navigator para telas de autenticação
+ * Ported VERBATIM from onsite-timekeeper.
  */
 
 import { Stack } from 'expo-router';
-import { colors } from '@onsite/tokens';
+import { colors } from '../../src/constants/colors';
 
 export default function AuthLayout() {
   return (

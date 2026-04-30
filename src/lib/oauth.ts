@@ -1,15 +1,15 @@
 /**
  * OAuth Helpers — Native Google + Apple Sign-In
  *
- * Both providers use supabase.auth.signInWithIdToken(). The Supabase
- * server validates the ID token's signature, audience, and nonce,
- * which is why we don't trust the client to forward the user's email.
+ * Both providers use supabase.auth.signInWithIdToken() which verifies
+ * the ID token's signature + audience + nonce server-side.
  *
- * Ported from onsite-timekeeper.
+ * Ported verbatim from onsite-timekeeper.
  */
 
 import { Platform } from 'react-native';
 import * as AppleAuthentication from 'expo-apple-authentication';
+
 import * as Crypto from 'expo-crypto';
 import Constants from 'expo-constants';
 import {
@@ -44,9 +44,11 @@ function configureGoogle() {
     logger.error('auth', 'Google iosClientId missing — iOS sign-in will fail');
   }
 
+  logger.info('auth', `Google configure: platform=${Platform.OS}, webClientId=${webClientId ? 'set' : 'MISSING'}, iosClientId=${iosClientId ? 'set' : 'MISSING'}`);
+
   GoogleSignin.configure({
-    webClientId, // REQUIRED — must match the Supabase aud claim
-    iosClientId, // iOS-only, ignored on Android
+    webClientId, // REQUIRED — matches Supabase aud claim
+    iosClientId, // iOS-only; ignored on Android
     scopes: ['profile', 'email'],
     offlineAccess: false, // we don't need Google refresh tokens
   });
@@ -64,8 +66,13 @@ export interface OAuthResult {
 // ─────────────────────────────────────────────────────────────
 
 /**
- * Nonce: random raw → SHA-256 hashed → sent to provider; raw is sent
- * to Supabase, which hashes and compares. Protects against replay.
+ * Nonce: random raw string → SHA-256 hashed version sent to provider
+ * (Google/Apple) → provider embeds hashed nonce in ID token → we send
+ * raw nonce to Supabase → GoTrue hashes raw nonce and compares.
+ * Protects against replay attacks.
+ *
+ * Required for Google on iOS (lib v16+ injects an unhashable nonce
+ * automatically if you don't pass one, then Supabase rejects).
  */
 async function generateNonce(): Promise<{ raw: string; hashed: string }> {
   const bytes = await Crypto.getRandomBytesAsync(32);
@@ -75,15 +82,16 @@ async function generateNonce(): Promise<{ raw: string; hashed: string }> {
   const hashed = await Crypto.digestStringAsync(
     Crypto.CryptoDigestAlgorithm.SHA256,
     raw,
-    { encoding: Crypto.CryptoEncoding.HEX },
+    { encoding: Crypto.CryptoEncoding.HEX }
   );
   return { raw, hashed };
 }
 
-// ─────────────────────────────────────────────────────────────
-// GOOGLE — Web (OAuth redirect via Supabase)
-// ─────────────────────────────────────────────────────────────
-
+/**
+ * Web variant — OAuth redirect via Supabase. The native @react-native-google-signin
+ * module isn't available in the browser, so we hand off to the OAuth flow
+ * before touching it (mirrors what we do for Apple).
+ */
 async function signInWithGoogleWeb(): Promise<OAuthResult> {
   try {
     const redirectTo =
@@ -104,14 +112,19 @@ async function signInWithGoogleWeb(): Promise<OAuthResult> {
       return { success: false, error: error.message };
     }
 
+    // signInWithOAuth navigates the browser away on success — control
+    // doesn't come back here. Return success so the caller doesn't show
+    // an error spinner; the actual sign-in completes after the redirect.
     return { success: true };
-  } catch (e: unknown) {
+  } catch (e: any) {
     logger.error('auth', 'Google sign-in (web) exception', { error: String(e) });
-    return { success: false, error: (e as Error)?.message || 'Google sign-in failed' };
+    return { success: false, error: e?.message || 'Google sign-in failed' };
   }
 }
 
 export async function signInWithGoogle(): Promise<OAuthResult> {
+  // Web → OAuth redirect via Supabase. GoogleSignin is iOS/Android only;
+  // calling it in the browser throws because the native module is missing.
   if (Platform.OS === 'web') {
     return signInWithGoogleWeb();
   }
@@ -122,16 +135,12 @@ export async function signInWithGoogle(): Promise<OAuthResult> {
       await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
     }
 
-    // @react-native-google-signin v16 on iOS auto-injects a nonce into the
-    // idToken via the GIDSignIn iOS SDK but doesn't expose it back to JS.
-    // Set external_google_skip_nonce_check=true in the Supabase project's
-    // Auth → Providers → Google config to side-step that constraint —
-    // signature, audience, and expiry are still verified server-side.
-    const response = (await GoogleSignin.signIn()) as {
-      type?: string;
-      data?: { idToken?: string };
-      idToken?: string;
-    };
+    // Note: @react-native-google-signin v16 on iOS auto-injects a nonce
+    // into the idToken via GIDSignIn iOS SDK, but doesn't expose a way
+    // to pass it back to JS. Supabase's project config has
+    // external_google_skip_nonce_check=true to side-step this — we still
+    // verify the token's signature, audience, and expiry server-side.
+    const response: any = await GoogleSignin.signIn();
 
     if (response?.type === 'cancelled') {
       return { success: false, cancelled: true };
@@ -158,25 +167,25 @@ export async function signInWithGoogle(): Promise<OAuthResult> {
       return { success: false, error: error.message };
     }
 
+    logger.info('auth', '✅ Google sign-in success');
     return { success: true };
-  } catch (e: unknown) {
-    const err = e as { code?: string | number; message?: string };
-    if (err?.code === statusCodes.SIGN_IN_CANCELLED) {
+  } catch (e: any) {
+    if (e?.code === statusCodes.SIGN_IN_CANCELLED) {
       return { success: false, cancelled: true };
     }
-    if (err?.code === statusCodes.IN_PROGRESS) {
+    if (e?.code === statusCodes.IN_PROGRESS) {
       return { success: false, error: 'Sign-in already in progress' };
     }
-    if (err?.code === statusCodes.PLAY_SERVICES_NOT_AVAILABLE) {
+    if (e?.code === statusCodes.PLAY_SERVICES_NOT_AVAILABLE) {
       return { success: false, error: 'Google Play Services not available' };
     }
     logger.error('auth', 'Google sign-in exception', {
-      code: err?.code,
-      message: err?.message,
+      code: e?.code,
+      message: e?.message,
       platform: Platform.OS,
       error: String(e),
     });
-    return { success: false, error: err?.message || 'Google sign-in failed' };
+    return { success: false, error: e?.message || 'Google sign-in failed' };
   }
 }
 
@@ -189,17 +198,25 @@ export async function signOutFromGoogle() {
 }
 
 // ─────────────────────────────────────────────────────────────
-// APPLE
+// APPLE (iOS only)
 // ─────────────────────────────────────────────────────────────
 
 export function isAppleAuthAvailable(): boolean {
-  // iOS uses the native AppleAuthentication modal. Web falls back to
-  // Supabase OAuth redirect. Android has no native Apple option.
+  // Web uses the OAuth redirect flow (signInWithAppleWeb), iOS uses
+  // expo-apple-authentication's native modal. Android still has no
+  // Apple Sign In option.
   return Platform.OS === 'ios' || Platform.OS === 'web';
 }
 
+// ─────────────────────────────────────────────────────────────
+// APPLE — WEB (OAuth redirect flow via Supabase)
+// ─────────────────────────────────────────────────────────────
+
 async function signInWithAppleWeb(): Promise<OAuthResult> {
   try {
+    // After Apple → Supabase callback, the browser comes back to our
+    // origin with auth tokens in the URL hash. detectSessionInUrl=true
+    // (in supabase.ts) handles the parsing and signs the user in.
     const redirectTo =
       typeof window !== 'undefined' ? `${window.location.origin}/login` : undefined;
 
@@ -217,17 +234,25 @@ async function signInWithAppleWeb(): Promise<OAuthResult> {
       });
       return { success: false, error: error.message };
     }
+
+    // signInWithOAuth navigates the browser away — control doesn't come
+    // back here on success. Return success so callers don't show an
+    // error spinner; the actual sign-in completes after the redirect.
     return { success: true };
-  } catch (e: unknown) {
+  } catch (e: any) {
     logger.error('auth', 'Apple sign-in (web) exception', { error: String(e) });
-    return { success: false, error: (e as Error)?.message || 'Apple sign-in failed' };
+    return { success: false, error: e?.message || 'Apple sign-in failed' };
   }
 }
 
 export async function signInWithApple(): Promise<OAuthResult> {
+  // Web → OAuth redirect via Supabase. The native expo-apple-authentication
+  // module isn't available in the browser, so we hand off there before
+  // touching it.
   if (Platform.OS === 'web') {
     return signInWithAppleWeb();
   }
+
   if (!isAppleAuthAvailable()) {
     return { success: false, error: 'Apple Sign-In is only available on iOS' };
   }
@@ -240,7 +265,7 @@ export async function signInWithApple(): Promise<OAuthResult> {
         AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
         AppleAuthentication.AppleAuthenticationScope.EMAIL,
       ],
-      nonce: hashed,
+      nonce: hashed, // send HASHED nonce to Apple
     });
 
     if (!credential.identityToken) {
@@ -251,7 +276,7 @@ export async function signInWithApple(): Promise<OAuthResult> {
     const { data, error } = await supabase.auth.signInWithIdToken({
       provider: 'apple',
       token: credential.identityToken,
-      nonce: raw,
+      nonce: raw, // send RAW nonce to Supabase
     });
 
     if (error) {
@@ -264,7 +289,7 @@ export async function signInWithApple(): Promise<OAuthResult> {
       return { success: false, error: error.message };
     }
 
-    // Apple only returns fullName on the FIRST sign-in — persist it now.
+    // Apple only returns fullName on FIRST sign-in — persist it immediately.
     if (credential.fullName && data.user) {
       const parts = [
         credential.fullName.givenName,
@@ -282,13 +307,14 @@ export async function signInWithApple(): Promise<OAuthResult> {
               last_name: credential.fullName.familyName || null,
             },
           });
-          await supabase.from('core_profiles').upsert(
+          // Also upsert profiles row (trigger only creates id/email)
+          await supabase.from('profiles').upsert(
             {
               id: data.user.id,
               email: data.user.email,
               full_name: fullName,
             },
-            { onConflict: 'id' },
+            { onConflict: 'id' }
           );
         } catch (e) {
           logger.warn('auth', 'Failed to persist Apple full name', { error: String(e) });
@@ -296,10 +322,10 @@ export async function signInWithApple(): Promise<OAuthResult> {
       }
     }
 
+    logger.info('auth', '✅ Apple sign-in success');
     return { success: true };
-  } catch (e: unknown) {
-    const err = e as { code?: string | number; message?: string };
-    if (err?.code === 'ERR_REQUEST_CANCELED') {
+  } catch (e: any) {
+    if (e?.code === 'ERR_REQUEST_CANCELED') {
       return { success: false, cancelled: true };
     }
     logger.error('auth', 'Apple sign-in exception', { error: String(e) });

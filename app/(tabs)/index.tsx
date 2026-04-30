@@ -175,6 +175,11 @@ export default function RequestsScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+      >
       <HeaderRow title="Requests" />
 
       <View style={styles.shiftCardWrap}>
@@ -219,6 +224,8 @@ export default function RequestsScreen() {
         <FlatList
           data={displayedItems}
           keyExtractor={(item) => item.id}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
           contentContainerStyle={
             displayedItems.length === 0 ? styles.listEmpty : styles.list
           }
@@ -258,6 +265,8 @@ export default function RequestsScreen() {
           }}
         />
       )}
+
+      </KeyboardAvoidingView>
 
       <AIHelperModal
         request={aiModalRequest}
@@ -359,7 +368,6 @@ function RequestCard({
   otherOpenCount: number;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [replyOpen, setReplyOpen] = useState(false);
   const [replyText, setReplyText] = useState('');
   const [sending, setSending] = useState(false);
 
@@ -405,7 +413,6 @@ function RequestCard({
       });
       if (error) throw error;
       setReplyText('');
-      setReplyOpen(false);
       fetchThread();
     } catch (err) {
       console.error('send-to-worker failed:', err);
@@ -471,8 +478,8 @@ function RequestCard({
         )}
       </View>
 
-      {/* Reply input (only when Reply is tapped) */}
-      {replyOpen ? (
+      {/* Reply input — always visible per non-delivered card (WhatsApp-style) */}
+      {!isDelivered ? (
         <View style={styles.replyRow}>
           <TextInput
             style={styles.replyInput}
@@ -507,16 +514,6 @@ function RequestCard({
           >
             <Text style={styles.iconBtnText}>✨</Text>
           </Pressable>
-          {!isDelivered ? (
-            <Pressable
-              onPress={() => setReplyOpen((v) => !v)}
-              style={[styles.iconBtn, replyOpen && styles.iconBtnActive]}
-              hitSlop={8}
-              accessibilityLabel="Reply"
-            >
-              <Text style={styles.iconBtnText}>💬</Text>
-            </Pressable>
-          ) : null}
         </View>
 
         {isDelivered && req.delivered_at ? (
@@ -716,8 +713,10 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
   },
   tab: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     borderRadius: borderRadius.full ?? 999,

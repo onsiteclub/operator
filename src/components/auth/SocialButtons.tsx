@@ -1,12 +1,11 @@
 /**
- * SocialButtons - Google + Apple sign-in.
+ * SocialButtons - OnSite Operator
+ * Ported VERBATIM from onsite-timekeeper.
  *
- * iOS uses the official native button via expo-apple-authentication.
- * Android has no Apple option (Apple's Sign In doesn't run there). Web
- * uses a custom-styled button that triggers the Supabase OAuth redirect
- * flow.
- *
- * Ported from onsite-timekeeper.
+ * Google + Apple sign-in buttons. iOS uses the official native button
+ * via expo-apple-authentication; web uses a custom-styled button that
+ * triggers the Supabase OAuth redirect flow. Android has no Apple
+ * Sign In option.
  */
 
 import React, { useState } from 'react';
@@ -17,11 +16,17 @@ import {
   ActivityIndicator,
   Platform,
   StyleSheet,
+  Alert,
 } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import * as AppleAuthentication from 'expo-apple-authentication';
-import { colors } from '@onsite/tokens';
+import { colors } from '../../constants/colors';
 import { useAuthStore } from '../../stores/authStore';
+
+// PLACEHOLDER MODE: render the buttons but skip the actual OAuth flow.
+// Flip to false once Apple Developer Portal capability + Google Cloud
+// SHA-1 (Android release) are wired and the next build is ready to test.
+const PLACEHOLDER_MODE = true;
 
 function GoogleLogo({ size = 20 }: { size?: number }) {
   return (
@@ -53,13 +58,16 @@ interface Props {
 
 export function SocialButtons({ onSuccess, onError, disabled }: Props) {
   const [loading, setLoading] = useState<'google' | 'apple' | null>(null);
-  const signInWithGoogle = useAuthStore((s) => s.signInWithGoogle);
-  const signInWithApple = useAuthStore((s) => s.signInWithApple);
+  const { signInWithGoogle, signInWithApple } = useAuthStore();
 
   const busy = loading !== null || disabled === true;
 
   const handleGoogle = async () => {
     if (busy) return;
+    if (PLACEHOLDER_MODE) {
+      Alert.alert('Coming soon', 'Sign in with Google will be available in the next build.');
+      return;
+    }
     setLoading('google');
     try {
       const res = await signInWithGoogle();
@@ -72,6 +80,10 @@ export function SocialButtons({ onSuccess, onError, disabled }: Props) {
 
   const handleApple = async () => {
     if (busy) return;
+    if (PLACEHOLDER_MODE) {
+      Alert.alert('Coming soon', 'Sign in with Apple will be available in the next build.');
+      return;
+    }
     setLoading('apple');
     try {
       const res = await signInWithApple();
@@ -132,7 +144,10 @@ export function SocialButtons({ onSuccess, onError, disabled }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { width: '100%', gap: 10 },
+  container: {
+    width: '100%',
+    gap: 10,
+  },
   button: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -145,8 +160,15 @@ const styles = StyleSheet.create({
     backgroundColor: colors.white,
     minHeight: 50,
   },
-  buttonText: { fontSize: 15, fontWeight: '500', color: colors.text },
-  appleButton: { width: '100%', height: 50 },
+  buttonText: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: colors.text,
+  },
+  appleButton: {
+    width: '100%',
+    height: 50,
+  },
   appleButtonWeb: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -158,6 +180,12 @@ const styles = StyleSheet.create({
     minHeight: 50,
     width: '100%',
   },
-  appleButtonWebText: { fontSize: 15, fontWeight: '500', color: '#FFFFFF' },
-  disabled: { opacity: 0.6 },
+  appleButtonWebText: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: '#FFFFFF',
+  },
+  disabled: {
+    opacity: 0.6,
+  },
 });

@@ -1,8 +1,9 @@
 /**
- * PhoneInputStep - Phone number input for password reset flow.
- * User enters their phone number to receive a reset OTP.
+ * PhoneInputStep - OnSite Operator
+ * Ported VERBATIM from onsite-timekeeper.
  *
- * Ported from onsite-timekeeper.
+ * Phone number input for password reset flow.
+ * User enters their phone number to receive a reset OTP.
  */
 
 import React, { useState, useCallback } from 'react';
@@ -17,12 +18,13 @@ import {
   Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors } from '@onsite/tokens';
+import { colors } from '../../constants/colors';
 import { ErrorBox } from '../ui/ErrorBox';
 import { validateCanadianPhone } from '../../lib/database/businessProfile';
 import { formatPhoneDisplay, normalizePhoneE164 } from '../../lib/format';
 
-const logoOnsite = require('../../../assets/onsite-club-logo.png');
+// Logo
+const logoOnsite = require('../../../assets/logo_onsite.png');
 
 interface PhoneInputStepProps {
   onSubmit: (phone: string) => Promise<{ error: string | null }>;
@@ -52,15 +54,19 @@ export default function PhoneInputStep({
       setError('Phone number is required');
       return;
     }
+
     if (!validateCanadianPhone(phone)) {
       setError('Enter a valid 10-digit Canadian phone number');
       return;
     }
 
     setIsLoading(true);
+
     try {
       const result = await onSubmit(normalizePhoneE164(phone));
-      if (result.error) setError(result.error);
+      if (result.error) {
+        setError(result.error);
+      }
     } catch {
       setError('Something went wrong. Please try again.');
     } finally {
@@ -74,6 +80,7 @@ export default function PhoneInputStep({
       contentContainerStyle={styles.content}
       keyboardShouldPersistTaps="handled"
     >
+      {/* Back Button */}
       <TouchableOpacity
         style={styles.backButton}
         onPress={onBack}
@@ -82,19 +89,25 @@ export default function PhoneInputStep({
         <Ionicons name="arrow-back" size={24} color={colors.text} />
       </TouchableOpacity>
 
+      {/* Header */}
       <View style={styles.header}>
-        <Image source={logoOnsite} style={styles.logo} resizeMode="contain" />
-        <Text style={styles.title}>Reset your password</Text>
+        <Image
+          source={logoOnsite}
+          style={styles.logo}
+          resizeMode="contain"
+        />
+        <Text style={styles.title}>Reset Your Password</Text>
         <Text style={styles.subtitle}>
-          Enter the phone number linked to your account. We{'’'}ll send you a code to reset your password.
+          Enter the phone number linked to your account. We'll send you a code to reset your password.
         </Text>
       </View>
 
+      {/* Form */}
       <View style={styles.form}>
         <ErrorBox message={error} />
 
         <View style={styles.inputContainer}>
-          <Text style={styles.label}>Phone number</Text>
+          <Text style={styles.label}>Phone Number</Text>
           <View style={styles.phoneContainer}>
             <View style={styles.phonePrefix}>
               <Text style={styles.phonePrefixText}>+1</Text>
@@ -116,7 +129,10 @@ export default function PhoneInputStep({
         </View>
 
         <TouchableOpacity
-          style={[styles.button, (isLoading || !phone) && styles.buttonDisabled]}
+          style={[
+            styles.button,
+            (isLoading || !phone) && styles.buttonDisabled,
+          ]}
           onPress={handleSubmit}
           disabled={isLoading || !phone}
           activeOpacity={0.8}
@@ -127,7 +143,7 @@ export default function PhoneInputStep({
               <Text style={styles.buttonText}>Sending code...</Text>
             </>
           ) : (
-            <Text style={styles.buttonText}>Send reset code</Text>
+            <Text style={styles.buttonText}>Send Reset Code</Text>
           )}
         </TouchableOpacity>
       </View>
@@ -136,8 +152,16 @@ export default function PhoneInputStep({
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
-  content: { flexGrow: 1, justifyContent: 'center', padding: 24, paddingBottom: 40 },
+  container: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
+  content: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    padding: 24,
+    paddingBottom: 40,
+  },
 
   backButton: {
     position: 'absolute',
@@ -154,15 +178,41 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
 
-  header: { alignItems: 'center', marginBottom: 40 },
-  logo: { width: 180, height: 62, marginBottom: 24 },
-  title: { fontSize: 22, fontWeight: '700', color: colors.text, textAlign: 'center', marginBottom: 8 },
-  subtitle: { fontSize: 15, color: colors.textSecondary, textAlign: 'center', lineHeight: 22 },
+  header: {
+    alignItems: 'center',
+    marginBottom: 40,
+  },
+  logo: {
+    width: 180,
+    height: 62,
+    marginBottom: 24,
+  },
+  title: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: colors.text,
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  subtitle: {
+    fontSize: 15,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 22,
+  },
 
-  form: { width: '100%' },
-  inputContainer: { marginBottom: 20 },
-  label: { fontSize: 14, fontWeight: '600', color: colors.text, marginBottom: 8 },
-
+  form: {
+    width: '100%',
+  },
+  inputContainer: {
+    marginBottom: 20,
+  },
+  label: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.text,
+    marginBottom: 8,
+  },
   phoneContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -171,9 +221,22 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     backgroundColor: colors.backgroundTertiary,
   },
-  phonePrefix: { paddingLeft: 16, paddingVertical: 14 },
-  phonePrefixText: { fontSize: 16, fontWeight: '600', color: colors.textSecondary },
-  phoneInput: { flex: 1, paddingHorizontal: 8, paddingVertical: 14, fontSize: 16, color: colors.text },
+  phonePrefix: {
+    paddingLeft: 16,
+    paddingVertical: 14,
+  },
+  phonePrefixText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.textSecondary,
+  },
+  phoneInput: {
+    flex: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 14,
+    fontSize: 16,
+    color: colors.text,
+  },
 
   button: {
     flexDirection: 'row',
@@ -185,6 +248,12 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     marginTop: 8,
   },
-  buttonDisabled: { opacity: 0.6 },
-  buttonText: { fontSize: 16, fontWeight: '600', color: colors.white },
+  buttonDisabled: {
+    opacity: 0.6,
+  },
+  buttonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.white,
+  },
 });

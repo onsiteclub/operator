@@ -1,14 +1,15 @@
 /**
- * Login screen — thin route wrapper around <AuthScreen />.
+ * Login Screen - OnSite Operator
+ * Ported VERBATIM from onsite-timekeeper.
  *
- * The full multi-step state machine (login → signup → OTP → reset)
- * lives in src/components/auth/AuthScreen.tsx, ported verbatim from
- * onsite-timekeeper. This file exists just to register the route so
- * expo-router can resolve `/(auth)/login`.
+ * Multi-step authentication flow:
+ * 1. Email input - checks if user exists
+ * 2a. Password (existing user) - login
+ * 2b. Signup (new user) - register
  */
 
-import AuthScreen from '../../src/components/auth/AuthScreen';
+import { AuthScreen } from '../../src/components/auth';
 
-export default function LoginRoute() {
+export default function LoginScreen() {
   return <AuthScreen />;
 }

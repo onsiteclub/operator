@@ -1,12 +1,8 @@
 /**
  * AuthScreen - OnSite Operator
  *
- * Single-screen login + step management for signup / OTP / phone reset.
- * Login screen is the default entry point (email + password + social).
- *
- * Ported verbatim from onsite-timekeeper. Adapted: imports go through
- * @onsite/tokens + relative paths; logo points at onsite-club-logo.png;
- * `amberSoftWarm` (timekeeper-only) falls back to `amberSoft`.
+ * Ported VERBATIM from onsite-timekeeper. Single-screen login + step
+ * management for signup/OTP/reset.
  */
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
@@ -27,7 +23,8 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams } from 'expo-router';
-import { colors } from '@onsite/tokens';
+import { colors } from '../../constants/colors';
+import { isSupabaseConfigured } from '../../lib/supabase';
 import { useAuthStore } from '../../stores/authStore';
 import type { User } from '@supabase/supabase-js';
 
@@ -37,13 +34,8 @@ import PhoneInputStep from './PhoneInputStep';
 import SetNewPasswordStep from './SetNewPasswordStep';
 import { SocialButtons } from './SocialButtons';
 
-const logoOnsite = require('../../../assets/onsite-club-logo.png');
-
-function isSupabaseConfigured(): boolean {
-  const url = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
-  const key = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
-  return url.length > 0 && key.length > 0;
-}
+// Logo
+const logoOnsite = require('../../../assets/logo_onsite.png');
 
 export interface AuthScreenProps {
   onSuccess?: (user: User, isNewUser: boolean) => void;
@@ -61,18 +53,9 @@ type ErrorBannerType =
   | null;
 
 export default function AuthScreen({ onSuccess }: AuthScreenProps) {
-  const {
-    signIn,
-    signUp,
-    verifyPhoneOtp,
-    sendPhoneOtp,
-    resetPasswordWithPhone,
-    verifyResetOtp,
-    updatePasswordAfterReset,
-    clearOtpState,
-  } = useAuthStore();
-  const pendingPhoneVerification = useAuthStore((s) => s.pendingPhoneVerification);
-  const pendingVerificationPhone = useAuthStore((s) => s.pendingVerificationPhone);
+  const { signIn, signUp, verifyPhoneOtp, sendPhoneOtp, resetPasswordWithPhone, verifyResetOtp, updatePasswordAfterReset, clearOtpState } = useAuthStore();
+  const pendingPhoneVerification = useAuthStore(s => s.pendingPhoneVerification);
+  const pendingVerificationPhone = useAuthStore(s => s.pendingVerificationPhone);
   const { expired } = useLocalSearchParams<{ expired?: string }>();
 
   const [step, setStep] = useState<AuthStep>('login');
@@ -84,13 +67,15 @@ export default function AuthScreen({ onSuccess }: AuthScreenProps) {
   const [errorBanner, setErrorBanner] = useState<ErrorBannerType>(null);
 
   // Auto-restore OTP step if pendingPhoneVerification is true on mount
+  // (e.g., user backgrounded app and returned during OTP verification)
   useEffect(() => {
     if (pendingPhoneVerification && pendingVerificationPhone && step !== 'verify-phone') {
       setPhone(pendingVerificationPhone);
       setStep('verify-phone');
     }
-  }, [pendingPhoneVerification, pendingVerificationPhone]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pendingPhoneVerification, pendingVerificationPhone]);
 
+  // Slide transitions between auth steps
   const fadeAnim = useRef(new Animated.Value(1)).current;
   const slideAnim = useRef(new Animated.Value(0)).current;
 
@@ -105,6 +90,7 @@ export default function AuthScreen({ onSuccess }: AuthScreenProps) {
     });
   }, [fadeAnim, slideAnim]);
 
+  // Dismiss error banner when user types
   const handleEmailChange = (text: string) => {
     setEmail(text);
     if (errorBanner) setErrorBanner(null);
@@ -115,6 +101,7 @@ export default function AuthScreen({ onSuccess }: AuthScreenProps) {
     if (errorBanner) setErrorBanner(null);
   };
 
+  // Classify Supabase errors into banner types
   const classifyError = useCallback((rawError: string | undefined): ErrorBannerType => {
     if (!rawError) return 'generic';
     const lower = rawError.toLowerCase();
@@ -125,6 +112,7 @@ export default function AuthScreen({ onSuccess }: AuthScreenProps) {
     return 'generic';
   }, []);
 
+  // Map raw error to user-friendly message (for non-login contexts like signup)
   const mapAuthError = useCallback((rawError: string | undefined): string => {
     if (!rawError) return 'Something went wrong. Please try again.';
     const lower = rawError.toLowerCase();
@@ -132,9 +120,7 @@ export default function AuthScreen({ onSuccess }: AuthScreenProps) {
     if (lower.includes('email not confirmed')) return 'Please check your email to confirm your account';
     if (lower.includes('rate limit') || lower.includes('too many')) return 'Too many attempts. Please wait a moment and try again.';
     if (lower.includes('network') || lower.includes('fetch')) return 'No internet connection. Please check your network.';
-    if (lower.includes('banned') || lower.includes('suspended') || lower.includes('disabled')) {
-      return 'Your account has been suspended. Please contact support at contact@onsiteclub.ca';
-    }
+    if (lower.includes('banned') || lower.includes('suspended') || lower.includes('disabled')) return 'Your account has been suspended. Please contact support at contact@onsiteclub.ca';
     return 'Something went wrong. Please try again.';
   }, []);
 
@@ -150,6 +136,7 @@ export default function AuthScreen({ onSuccess }: AuthScreenProps) {
 
     try {
       const result = await signIn(email.trim().toLowerCase(), password);
+
       if (!result.success) {
         setErrorBanner(classifyError(result.error));
       } else if (onSuccess) {
@@ -184,6 +171,7 @@ export default function AuthScreen({ onSuccess }: AuthScreenProps) {
     if (!isSupabaseConfigured()) {
       return { error: 'Authentication is not available.' };
     }
+
     if (!emailToUse?.trim()) {
       return { error: 'Email is required. Please go back and enter your email.' };
     }
@@ -196,11 +184,11 @@ export default function AuthScreen({ onSuccess }: AuthScreenProps) {
       });
 
       if (!result.success) {
-        if (
-          result.error === 'already_registered'
-          || result.error?.toLowerCase().includes('already registered')
-          || result.error?.toLowerCase().includes('already been registered')
-        ) {
+        // Handle "already registered" — redirect to login with message
+        if (result.error === 'already_registered' ||
+            result.error?.toLowerCase().includes('already registered') ||
+            result.error?.toLowerCase().includes('already been registered')) {
+          console.log('[AuthScreen] Email already registered — redirect to login');
           setErrorBanner('already-registered');
           transitionTo('login');
           return { error: null };
@@ -208,12 +196,14 @@ export default function AuthScreen({ onSuccess }: AuthScreenProps) {
         return { error: mapAuthError(result.error) };
       }
 
+      // Phone verification needed — transition to OTP step
       if (result.needsPhoneVerification) {
         setPhone(profile.phone);
         transitionTo('verify-phone');
         return { error: null, needsPhoneVerification: true };
       }
 
+      // Logged in — navigation guard handles redirect
       if (onSuccess) {
         const { user } = useAuthStore.getState();
         if (user) onSuccess(user, true);
@@ -294,6 +284,11 @@ export default function AuthScreen({ onSuccess }: AuthScreenProps) {
 
     switch (errorBanner) {
       case 'wrong-credentials':
+        // We can't tell here whether the user typed the wrong password
+        // or whether the account is OAuth-only with no password set, so
+        // we hint at both paths plus signup. The Apple/Google buttons
+        // sit right below the banner, so the language nudges users to
+        // try them if they signed up that way.
         title = "Couldn't sign in.";
         body = 'Check your password, or use Apple/Google below if you signed up that way. Or ';
         showCreateLink = true;
@@ -353,6 +348,7 @@ export default function AuthScreen({ onSuccess }: AuthScreenProps) {
       contentContainerStyle={styles.loginContent}
       keyboardShouldPersistTaps="handled"
     >
+      {/* Session expiry banner */}
       {expired === 'true' && (
         <View style={styles.expiredBanner}>
           <Ionicons name="time-outline" size={18} color="#854F0B" />
@@ -362,11 +358,13 @@ export default function AuthScreen({ onSuccess }: AuthScreenProps) {
         </View>
       )}
 
+      {/* Logo + subtitle */}
       <View style={styles.logoContainer}>
         <Image source={logoOnsite} style={styles.logo} resizeMode="contain" />
         <Text style={styles.welcomeSubtitle}>Welcome back</Text>
       </View>
 
+      {/* Email */}
       <View style={styles.inputGroup}>
         <Text style={styles.label}>Email</Text>
         <TextInput
@@ -384,6 +382,7 @@ export default function AuthScreen({ onSuccess }: AuthScreenProps) {
         />
       </View>
 
+      {/* Password */}
       <View style={styles.inputGroup}>
         <Text style={styles.label}>Password</Text>
         <View style={styles.passwordContainer}>
@@ -413,8 +412,10 @@ export default function AuthScreen({ onSuccess }: AuthScreenProps) {
         </View>
       </View>
 
+      {/* Error Banner (amber, between password and Sign In) */}
       {renderErrorBanner()}
 
+      {/* Sign In Button */}
       <TouchableOpacity
         style={[
           styles.signInButton,
@@ -434,6 +435,7 @@ export default function AuthScreen({ onSuccess }: AuthScreenProps) {
         )}
       </TouchableOpacity>
 
+      {/* Forgot Password */}
       <TouchableOpacity
         style={styles.forgotButton}
         onPress={handleForgotPassword}
@@ -442,12 +444,14 @@ export default function AuthScreen({ onSuccess }: AuthScreenProps) {
         <Text style={styles.forgotText}>Forgot password?</Text>
       </TouchableOpacity>
 
+      {/* Divider */}
       <View style={styles.divider}>
         <View style={styles.dividerLine} />
         <Text style={styles.dividerText}>or</Text>
         <View style={styles.dividerLine} />
       </View>
 
+      {/* Social Sign-In (Google always, Apple on iOS only) */}
       <SocialButtons
         disabled={isLoading}
         onError={(msg) => {
@@ -455,6 +459,7 @@ export default function AuthScreen({ onSuccess }: AuthScreenProps) {
           setErrorBanner(classifyError(msg));
         }}
         onSuccess={() => {
+          // Navigation guard will redirect once session is committed by onAuthStateChange
           if (onSuccess) {
             const { user } = useAuthStore.getState();
             if (user) onSuccess(user, false);
@@ -462,8 +467,9 @@ export default function AuthScreen({ onSuccess }: AuthScreenProps) {
         }}
       />
 
+      {/* Sign Up Link */}
       <View style={styles.signUpRow}>
-        <Text style={styles.signUpText}>Don{'’'}t have an account? </Text>
+        <Text style={styles.signUpText}>Don't have an account? </Text>
         <TouchableOpacity onPress={handleNavigateToSignup} disabled={isLoading}>
           <Text style={styles.signUpLink}>Sign up</Text>
         </TouchableOpacity>
@@ -548,9 +554,17 @@ export default function AuthScreen({ onSuccess }: AuthScreenProps) {
 // ============================================
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
-  keyboardView: { flex: 1 },
-  scrollView: { flex: 1, backgroundColor: colors.background },
+  container: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
+  keyboardView: {
+    flex: 1,
+  },
+  scrollView: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
   loginContent: {
     flexGrow: 1,
     justifyContent: 'center',
@@ -558,12 +572,32 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
   },
 
-  logoContainer: { alignItems: 'center', marginBottom: 24 },
-  logo: { width: 160, height: 55, marginBottom: 8 },
-  welcomeSubtitle: { fontSize: 16, color: colors.textSecondary, textAlign: 'center' },
+  // Logo
+  logoContainer: {
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  logo: {
+    width: 160,
+    height: 55,
+    marginBottom: 8,
+  },
+  welcomeSubtitle: {
+    fontSize: 16,
+    color: colors.textSecondary,
+    textAlign: 'center',
+  },
 
-  inputGroup: { marginBottom: 16 },
-  label: { fontSize: 14, fontWeight: '600', color: colors.text, marginBottom: 8 },
+  // Inputs
+  inputGroup: {
+    marginBottom: 16,
+  },
+  label: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.text,
+    marginBottom: 8,
+  },
   input: {
     borderWidth: 1,
     borderColor: colors.border,
@@ -589,8 +623,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: colors.text,
   },
-  eyeButton: { paddingHorizontal: 16, paddingVertical: 14 },
+  eyeButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
 
+  // Sign In Button
   signInButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -601,25 +639,61 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     marginTop: 8,
   },
-  buttonDisabled: { opacity: 0.6 },
-  signInButtonText: { fontSize: 16, fontWeight: '600', color: colors.white },
+  buttonDisabled: {
+    opacity: 0.6,
+  },
+  signInButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.white,
+  },
 
-  forgotButton: { alignItems: 'center', marginTop: 12 },
-  forgotText: { fontSize: 14, fontWeight: '500', color: colors.primary },
+  // Forgot password
+  forgotButton: {
+    alignItems: 'center',
+    marginTop: 12,
+  },
+  forgotText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: colors.primary,
+  },
 
-  divider: { flexDirection: 'row', alignItems: 'center', marginVertical: 20 },
-  dividerLine: { flex: 1, height: 1, backgroundColor: colors.border },
-  dividerText: { fontSize: 13, color: colors.textSecondary, marginHorizontal: 16 },
+  // Divider
+  divider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 20,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: colors.border,
+  },
+  dividerText: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    marginHorizontal: 16,
+  },
 
+  // Sign up link
   signUpRow: {
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
     marginTop: 24,
   },
-  signUpText: { fontSize: 14, color: colors.textSecondary },
-  signUpLink: { fontSize: 14, fontWeight: '600', color: colors.primary },
+  signUpText: {
+    fontSize: 14,
+    color: colors.textSecondary,
+  },
+  signUpLink: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.primary,
+  },
 
+  // Error banner (amber, friendly)
   errorBanner: {
     backgroundColor: '#FFF8E7',
     borderWidth: 0.5,
@@ -628,12 +702,24 @@ const styles = StyleSheet.create({
     padding: 12,
     marginBottom: 8,
   },
-  errorBannerTitle: { fontSize: 13, fontWeight: '500', color: '#854F0B' },
-  errorBannerBody: { fontSize: 12, color: '#854F0B', marginTop: 2 },
-  errorBannerLink: { textDecorationLine: 'underline', fontWeight: '500' },
+  errorBannerTitle: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#854F0B',
+  },
+  errorBannerBody: {
+    fontSize: 12,
+    color: '#854F0B',
+    marginTop: 2,
+  },
+  errorBannerLink: {
+    textDecorationLine: 'underline',
+    fontWeight: '500',
+  },
 
+  // Session expiry banner
   expiredBanner: {
-    backgroundColor: colors.amberSoft,
+    backgroundColor: colors.amberSoftWarm,
     padding: 12,
     borderRadius: 8,
     marginBottom: 16,
@@ -641,5 +727,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
-  expiredText: { fontSize: 13, color: '#854F0B', flex: 1 },
+  expiredText: {
+    fontSize: 13,
+    color: '#854F0B',
+    flex: 1,
+  },
 });

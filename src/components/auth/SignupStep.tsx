@@ -1,8 +1,7 @@
 /**
- * SignupStep - Registration form for new accounts.
- * Used inside AuthScreen as the 'signup' step.
- *
- * Ported verbatim from onsite-timekeeper.
+ * SignupStep - OnSite Operator
+ * Ported VERBATIM from onsite-timekeeper.
+ * Step 2B: Registration form for new accounts.
  */
 
 import React, { useState, useCallback } from 'react';
@@ -18,19 +17,24 @@ import {
   Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors } from '@onsite/tokens';
+import { colors } from '../../constants/colors';
 import { ErrorBox } from '../ui/ErrorBox';
 import { validateCanadianPhone } from '../../lib/database/businessProfile';
 import { formatPhoneDisplay, normalizePhoneE164 } from '../../lib/format';
 
-const logoOnsite = require('../../../assets/onsite-club-logo.png');
+// Logo
+const logoOnsite = require('../../../assets/logo_onsite.png');
 
 interface SignupStepProps {
   email: string;
   onSignUp: (
     email: string,
     password: string,
-    profile: { firstName: string; lastName: string; phone: string },
+    profile: {
+      firstName: string;
+      lastName: string;
+      phone: string;
+    }
   ) => Promise<{ error: string | null; needsConfirmation?: boolean; needsPhoneVerification?: boolean }>;
   onBack: () => void;
   isLoading: boolean;
@@ -53,6 +57,7 @@ export default function SignupStep({
   const [error, setError] = useState<string | null>(null);
 
   const handlePhoneChange = (text: string) => {
+    // Strip to digits only, limit to 10
     const digits = text.replace(/\D/g, '').slice(0, 10);
     setPhone(digits);
   };
@@ -71,6 +76,7 @@ export default function SignupStep({
 
   const handleSubmit = useCallback(async () => {
     setError(null);
+
     const validationError = validateForm();
     if (validationError) {
       setError(validationError);
@@ -78,23 +84,33 @@ export default function SignupStep({
     }
 
     setIsLoading(true);
+
     try {
       const result = await onSignUp(localEmail.trim(), password, {
         firstName: firstName.trim(),
         lastName: lastName.trim(),
         phone: normalizePhoneE164(phone),
       });
-      if (result.error) setError(result.error);
+
+      if (result.error) {
+        setError(result.error);
+      }
+      // Phone verification is handled via needsPhoneVerification in AuthScreen
     } catch (err) {
       setError('Something went wrong. Please try again.');
       console.log('[SignupStep] Error:', err);
     } finally {
       setIsLoading(false);
     }
-  }, [localEmail, firstName, lastName, phone, password, onSignUp, setIsLoading]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [localEmail, firstName, lastName, phone, password, onSignUp, setIsLoading]);
 
-  const openTerms = () => Linking.openURL('https://www.onsiteclub.ca/legal/operator/terms');
-  const openPrivacy = () => Linking.openURL('https://www.onsiteclub.ca/legal/operator/privacy');
+  const openTerms = () => {
+    Linking.openURL('https://www.onsiteclub.ca/legal/operator-terms');
+  };
+
+  const openPrivacy = () => {
+    Linking.openURL('https://www.onsiteclub.ca/legal/operator-privacy');
+  };
 
   return (
     <ScrollView
@@ -102,6 +118,7 @@ export default function SignupStep({
       contentContainerStyle={styles.content}
       keyboardShouldPersistTaps="handled"
     >
+      {/* Back Button */}
       <TouchableOpacity
         style={styles.backButton}
         onPress={onBack}
@@ -110,14 +127,21 @@ export default function SignupStep({
         <Ionicons name="arrow-back" size={24} color={colors.text} />
       </TouchableOpacity>
 
+      {/* Header */}
       <View style={styles.header}>
-        <Image source={logoOnsite} style={styles.logo} resizeMode="contain" />
+        <Image
+          source={logoOnsite}
+          style={styles.logo}
+          resizeMode="contain"
+        />
         <Text style={styles.subtitle}>Create your account</Text>
       </View>
 
+      {/* Form */}
       <View style={styles.form}>
         <ErrorBox message={error} />
 
+        {/* Name Row */}
         <View style={styles.nameRow}>
           <View style={[styles.inputContainer, styles.nameInput]}>
             <Text style={styles.label}>First Name</Text>
@@ -149,6 +173,7 @@ export default function SignupStep({
           </View>
         </View>
 
+        {/* Email Input */}
         <View style={styles.inputContainer}>
           <Text style={styles.label}>Email</Text>
           <TextInput
@@ -164,6 +189,7 @@ export default function SignupStep({
           />
         </View>
 
+        {/* Phone Input */}
         <View style={styles.inputContainer}>
           <Text style={styles.label}>Phone Number</Text>
           <View style={styles.phoneContainer}>
@@ -181,11 +207,10 @@ export default function SignupStep({
               maxLength={14}
             />
           </View>
-          <Text style={styles.phoneHint}>
-            Used for verification and password reset. Canadian numbers only.
-          </Text>
+          <Text style={styles.phoneHint}>Used for verification and password reset. Canadian numbers only.</Text>
         </View>
 
+        {/* Password Input */}
         <View style={styles.inputContainer}>
           <Text style={styles.label}>Password</Text>
           <View style={styles.passwordContainer}>
@@ -215,8 +240,12 @@ export default function SignupStep({
           </View>
         </View>
 
+        {/* UX3: Submit Button ABOVE terms */}
         <TouchableOpacity
-          style={[styles.button, isLoading && styles.buttonDisabled]}
+          style={[
+            styles.button,
+            isLoading && styles.buttonDisabled
+          ]}
           onPress={handleSubmit}
           disabled={isLoading}
           activeOpacity={0.8}
@@ -231,6 +260,7 @@ export default function SignupStep({
           )}
         </TouchableOpacity>
 
+        {/* Terms (below button, smaller) */}
         <Text style={styles.terms}>
           By registering, you agree to our{' '}
           <Text style={styles.termsLink} onPress={openTerms}>Terms</Text>
@@ -243,9 +273,19 @@ export default function SignupStep({
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
-  content: { flexGrow: 1, justifyContent: 'center', padding: 24, paddingTop: 60, paddingBottom: 40 },
+  container: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
+  content: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    padding: 24,
+    paddingTop: 60,
+    paddingBottom: 40,
+  },
 
+  // Back Button
   backButton: {
     position: 'absolute',
     top: 16,
@@ -261,16 +301,45 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
 
-  header: { alignItems: 'center', marginBottom: 32 },
-  logo: { width: 160, height: 55, marginBottom: 16 },
-  subtitle: { fontSize: 16, color: colors.textSecondary, textAlign: 'center' },
+  // Header
+  header: {
+    alignItems: 'center',
+    marginBottom: 32,
+  },
+  logo: {
+    width: 160,
+    height: 55,
+    marginBottom: 16,
+  },
+  subtitle: {
+    fontSize: 16,
+    color: colors.textSecondary,
+    textAlign: 'center',
+  },
 
-  form: { width: '100%' },
-  nameRow: { flexDirection: 'row', gap: 12 },
-  nameInput: { flex: 1 },
+  // Form
+  form: {
+    width: '100%',
+  },
+  // Name Row
+  nameRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  nameInput: {
+    flex: 1,
+  },
 
-  inputContainer: { marginBottom: 16 },
-  label: { fontSize: 14, fontWeight: '600', color: colors.text, marginBottom: 8 },
+  // Input
+  inputContainer: {
+    marginBottom: 16,
+  },
+  label: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.text,
+    marginBottom: 8,
+  },
   input: {
     borderWidth: 1,
     borderColor: colors.border,
@@ -281,7 +350,6 @@ const styles = StyleSheet.create({
     color: colors.text,
     backgroundColor: colors.backgroundTertiary,
   },
-
   phoneContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -290,11 +358,27 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     backgroundColor: colors.backgroundTertiary,
   },
-  phonePrefix: { paddingLeft: 16, paddingVertical: 14 },
-  phonePrefixText: { fontSize: 16, fontWeight: '600', color: colors.textSecondary },
-  phoneInput: { flex: 1, paddingHorizontal: 8, paddingVertical: 14, fontSize: 16, color: colors.text },
-  phoneHint: { fontSize: 12, color: colors.textMuted, marginTop: 6 },
-
+  phonePrefix: {
+    paddingLeft: 16,
+    paddingVertical: 14,
+  },
+  phonePrefixText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.textSecondary,
+  },
+  phoneInput: {
+    flex: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 14,
+    fontSize: 16,
+    color: colors.text,
+  },
+  phoneHint: {
+    fontSize: 12,
+    color: colors.textMuted,
+    marginTop: 6,
+  },
   passwordContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -303,12 +387,32 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     backgroundColor: colors.backgroundTertiary,
   },
-  passwordInput: { flex: 1, paddingHorizontal: 16, paddingVertical: 14, fontSize: 16, color: colors.text },
-  eyeButton: { paddingHorizontal: 16, paddingVertical: 14 },
+  passwordInput: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    fontSize: 16,
+    color: colors.text,
+  },
+  eyeButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
 
-  terms: { fontSize: 12, color: colors.textMuted, textAlign: 'center', lineHeight: 18, marginTop: 12 },
-  termsLink: { color: colors.primary, fontWeight: '600' },
+  // Terms (UX3: below button, smaller)
+  terms: {
+    fontSize: 12,
+    color: colors.textMuted,
+    textAlign: 'center',
+    lineHeight: 18,
+    marginTop: 12,
+  },
+  termsLink: {
+    color: colors.primary,
+    fontWeight: '600',
+  },
 
+  // Button
   button: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -318,6 +422,13 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     borderRadius: 12,
   },
-  buttonDisabled: { opacity: 0.6 },
-  buttonText: { fontSize: 16, fontWeight: '600', color: colors.white },
+  buttonDisabled: {
+    opacity: 0.6,
+  },
+  buttonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.white,
+  },
+
 });
