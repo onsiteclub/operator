@@ -11,7 +11,7 @@ import { View, Text, StyleSheet, Pressable, Alert, ScrollView, TextInput } from 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { colors, spacing, borderRadius, typography } from '@onsite/tokens';
+import { colors, spacing, borderRadius } from '@onsite/tokens';
 import { useAuthStore } from '../src/stores/authStore';
 import { useSupervisorPhone } from '../src/hooks/useSupervisorPhone';
 import { useForwardNumber } from '../src/hooks/useForwardNumber';
@@ -28,7 +28,7 @@ export default function SettingsScreen() {
   const [supervisorInput, setSupervisorInput] = useState('');
   const [savingSupervisor, setSavingSupervisor] = useState(false);
 
-  const { phone: forwardPhone, loaded: forwardLoaded, saving: savingForward, save: saveForwardPhone } = useForwardNumber();
+  const { phone: forwardPhone, authPhone, loaded: forwardLoaded, saving: savingForward, save: saveForwardPhone } = useForwardNumber();
   const [forwardInput, setForwardInput] = useState('');
 
   useEffect(() => {
@@ -43,13 +43,17 @@ export default function SettingsScreen() {
 
   useEffect(() => {
     if (!forwardLoaded) return;
-    if (forwardPhone) {
-      const digits = forwardPhone.replace(/\D/g, '').slice(-10);
+    // Saved value wins; otherwise pre-fill from the verified phone on
+    // auth.users (populated by the OTP signup flow). Lets the operator
+    // hit Save without retyping their own number.
+    const seed = forwardPhone || authPhone;
+    if (seed) {
+      const digits = seed.replace(/\D/g, '').slice(-10);
       setForwardInput(formatPhoneDisplay(digits));
     } else {
       setForwardInput('');
     }
-  }, [forwardPhone, forwardLoaded]);
+  }, [forwardPhone, authPhone, forwardLoaded]);
 
   const handleForwardChange = (value: string) => {
     const digits = value.replace(/\D/g, '').slice(0, 10);
@@ -116,6 +120,19 @@ export default function SettingsScreen() {
     (supervisorInputDigits.length === 10 ||
       (supervisorInputDigits.length === 0 && !!supervisorPhone));
 
+  const initials = (() => {
+    const name = (cachedFullName || '').trim();
+    if (name) {
+      const parts = name.split(/\s+/);
+      if (parts.length >= 2) {
+        return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+      }
+      return name.slice(0, 2).toUpperCase();
+    }
+    const email = user?.email || '';
+    return email ? email.slice(0, 2).toUpperCase() : '?';
+  })();
+
   const handleSignOut = () => {
     Alert.alert('Sign out?', 'You will need to sign in again to use the app.', [
       { text: 'Cancel', style: 'cancel' },
@@ -137,32 +154,19 @@ export default function SettingsScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <View style={styles.header}>
+      <View style={styles.topBar}>
         <Pressable onPress={() => router.back()} hitSlop={10} style={styles.backBtn}>
           <Ionicons name="chevron-back" size={26} color={colors.text} />
         </Pressable>
-        <Text style={styles.title}>Settings</Text>
-        <View style={styles.backBtn} />
       </View>
 
       <ScrollView contentContainerStyle={styles.body}>
-        <Text style={styles.sectionLabel}>ACCOUNT</Text>
-        <View style={styles.card}>
-          <View style={styles.row}>
-            <Ionicons name="person-outline" size={20} color={colors.textSecondary} />
-            <View style={{ flex: 1 }}>
-              <Text style={styles.rowLabel}>Name</Text>
-              <Text style={styles.rowValue}>{cachedFullName || '—'}</Text>
-            </View>
+        <View style={styles.profileBlock}>
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>{initials}</Text>
           </View>
-          <View style={styles.divider} />
-          <View style={styles.row}>
-            <Ionicons name="mail-outline" size={20} color={colors.textSecondary} />
-            <View style={{ flex: 1 }}>
-              <Text style={styles.rowLabel}>Email</Text>
-              <Text style={styles.rowValue}>{user?.email || '—'}</Text>
-            </View>
-          </View>
+          {!!cachedFullName && <Text style={styles.profileName}>{cachedFullName}</Text>}
+          {!!user?.email && <Text style={styles.profileEmail}>{user.email}</Text>}
         </View>
 
         <Text style={styles.sectionLabel}>SUPERVISOR</Text>
@@ -255,18 +259,45 @@ export default function SettingsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  header: {
+  topBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.borderLight,
   },
   backBtn: { width: 40, height: 40, justifyContent: 'center' },
-  title: { ...typography.screenTitle, fontSize: 17 },
-  body: { padding: spacing.lg, paddingBottom: spacing.xxl },
+  body: { padding: spacing.lg, paddingTop: 0, paddingBottom: spacing.xxl },
+
+  profileBlock: {
+    alignItems: 'center',
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.lg,
+  },
+  avatar: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    backgroundColor: colors.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.md,
+  },
+  avatarText: {
+    fontSize: 32,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    letterSpacing: 1,
+  },
+  profileName: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: colors.text,
+  },
+  profileEmail: {
+    fontSize: 14,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
 
   sectionLabel: {
     fontSize: 12,

@@ -14,6 +14,7 @@ import { normalizePhoneE164 } from '../lib/format';
 
 export function useForwardNumber() {
   const [phone, setPhone] = useState<string | null>(null);
+  const [authPhone, setAuthPhone] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -24,6 +25,7 @@ export function useForwardNumber() {
       setLoaded(true);
       return;
     }
+    setAuthPhone((authData.user?.phone as string | undefined) || null);
     const { data, error } = await supabase
       .from('frm_operator_numbers')
       .select('forward_to_e164')
@@ -66,5 +68,5 @@ export function useForwardNumber() {
     load();
   }, [load]);
 
-  return { phone, loaded, saving, save, reload: load };
+  return { phone, authPhone, loaded, saving, save, reload: load };
 }

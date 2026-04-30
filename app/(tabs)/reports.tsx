@@ -15,22 +15,29 @@
  * (TimesheetSection) is no longer on the hub — it lives in /hours.
  */
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View, Text, StyleSheet, Pressable, ScrollView, Modal,
-  ActivityIndicator, Platform,
+  ActivityIndicator, Platform, Alert, Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { colors, spacing, borderRadius, shadows, withOpacity } from '@onsite/tokens';
+import { colors, shadows, withOpacity } from '@onsite/tokens';
 
 import { HourlyWizard } from '../../src/screens/invoice/HourlyWizard';
+import ServicesWizard from '../../src/screens/invoice/ServicesWizard';
+import { InvoiceSummaryCard, type TimeTableDay, type InvoiceSummaryChanges } from '../../src/screens/invoice/InvoiceSummaryCard';
+import { PressableOpacity } from '../../src/components/ui/PressableOpacity';
 import { HeaderRow } from '../../src/components/ui/HeaderRow';
 import { useAuthStore } from '../../src/stores/authStore';
 import { useBusinessProfileStore } from '../../src/stores/businessProfileStore';
 import { useInvoiceStore } from '../../src/stores/invoiceStore';
-import type { InvoiceDB } from '../../src/lib/database/core';
+import type { InvoiceDB, InvoiceItemDB, ClientDB } from '../../src/lib/database/core';
+import { formatDuration } from '../../src/lib/database/core';
+import { getInvoiceItems, updateInvoiceStatus } from '../../src/lib/database/invoices';
+import { getClientByName } from '../../src/lib/database/clients';
+import { getDailyHoursByPeriod, updateDailyHours, type DailyHoursEntry } from '../../src/lib/database/daily';
 import { formatMoney } from '../../src/lib/format';
 import { shareInvoice } from '../../src/lib/invoiceShare';
 import { formatDateRange } from '../../src/screens/home/helpers';
@@ -51,7 +58,14 @@ export default function InvoiceScreen() {
   const recentInvoices = useInvoiceStore((s) => s.recentInvoices);
 
   const [wizardOpen, setWizardOpen] = useState(false);
-  const [detail, setDetail] = useState<InvoiceDB | null>(null);
+  const [servicesOpen, setServicesOpen] = useState(false);
+
+  // Detail modal state (mirrors timekeeper's invoice.tsx)
+  const [selectedInvoice, setSelectedInvoice] = useState<InvoiceDB | null>(null);
+  const [selectedInvoiceItems, setSelectedInvoiceItems] = useState<InvoiceItemDB[]>([]);
+  const [selectedInvoiceDays, setSelectedInvoiceDays] = useState<DailyHoursEntry[]>([]);
+  const [detailClientData, setDetailClientData] = useState<ClientDB | null>(null);
+  const [isRegeneratingPdf, setIsRegeneratingPdf] = useState(false);
 
   useEffect(() => {
     if (!userId) return;
@@ -67,6 +81,30 @@ export default function InvoiceScreen() {
     }
   }, [params.openWizard, businessProfile, router]);
 
+  // Open the detail modal and pre-load every dependent piece of data
+  // the InvoiceSummaryCard needs to render in dual read/edit mode:
+  // line items for products invoices, daily hours for hourly invoices,
+  // and the full client record for the TO card.
+  const openInvoiceDetail = useCallback((inv: InvoiceDB) => {
+    setSelectedInvoice(inv);
+    if (inv.type === 'products_services') {
+      setSelectedInvoiceItems(getInvoiceItems(inv.id));
+      setSelectedInvoiceDays([]);
+    } else {
+      setSelectedInvoiceItems([]);
+      if (userId && inv.period_start && inv.period_end) {
+        setSelectedInvoiceDays(getDailyHoursByPeriod(userId, inv.period_start, inv.period_end));
+      } else {
+        setSelectedInvoiceDays([]);
+      }
+    }
+    if (userId && inv.client_name) {
+      setDetailClientData(getClientByName(userId, inv.client_name));
+    } else {
+      setDetailClientData(null);
+    }
+  }, [userId]);
+
   // Auto-open Detail modal when arriving with ?openInvoiceId=X (after a
   // successful save in /client-edit or /business-profile via the
   // "View Invoice" snackbar action).
@@ -74,15 +112,170 @@ export default function InvoiceScreen() {
     if (!params.openInvoiceId) return;
     const target = recentInvoices.find((i) => i.id === params.openInvoiceId);
     if (target) {
-      setDetail(target);
+      openInvoiceDetail(target);
       router.setParams({ openInvoiceId: undefined as any });
     }
-  }, [params.openInvoiceId, recentInvoices, router]);
+  }, [params.openInvoiceId, recentInvoices, router, openInvoiceDetail]);
 
   const handleEditHoursFromWizard = () => {
     setWizardOpen(false);
     router.push('/hours?from=wizard' as any);
   };
+
+  // Detail modal: edit client (TO card) → close modal and route to
+  // /client-edit. The InvoiceSummaryCard has already persisted any
+  // pending draft via onSave before invoking this.
+  const handleEditClientFromDetail = useCallback(() => {
+    if (!selectedInvoice) return;
+    const invoice = selectedInvoice;
+    setSelectedInvoice(null);
+    router.push({
+      pathname: '/client-edit',
+      params: {
+        invoiceId: invoice.id,
+        invoiceNumber: invoice.invoice_number,
+        clientName: invoice.client_name || '',
+      },
+    } as any);
+  }, [selectedInvoice, router]);
+
+  // Detail modal: edit business profile (FROM card)
+  const handleEditFromDetail = useCallback(() => {
+    if (!selectedInvoice) return;
+    const invoice = selectedInvoice;
+    setSelectedInvoice(null);
+    router.push({
+      pathname: '/business-profile',
+      params: {
+        invoiceId: invoice.id,
+        invoiceNumber: invoice.invoice_number,
+      },
+    } as any);
+  }, [selectedInvoice, router]);
+
+  // Build TimeTableDay[] from raw daily_hours rows for the SummaryCard.
+  const detailDays: TimeTableDay[] = useMemo(() => {
+    return selectedInvoiceDays.map((day) => ({
+      id: day.id,
+      date: day.date,
+      dateLabel: new Date(day.date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+      inLabel: day.first_entry || '—',
+      outLabel: day.last_exit || '—',
+      breakLabel: day.break_minutes > 0 ? `${day.break_minutes}m` : '—',
+      totalLabel: formatDuration(day.total_minutes),
+      totalMinutes: day.total_minutes,
+      rawEntry: day,
+    }));
+  }, [selectedInvoiceDays]);
+
+  // Detail modal: persist edits batched by InvoiceSummaryCard's edit
+  // mode (rate / tax / notes / due date / day rows / line items). The
+  // store's updateInvoice() already triggers PDF regeneration.
+  const handleSaveDetail = useCallback(async (changes: InvoiceSummaryChanges) => {
+    if (!userId || !selectedInvoice) return;
+
+    if (changes.dayUpdates) {
+      for (const du of changes.dayUpdates) {
+        updateDailyHours(userId, du.date, {
+          firstEntry: du.firstEntry || undefined,
+          lastExit: du.lastExit || undefined,
+          breakMinutes: du.breakMinutes,
+          totalMinutes: du.totalMinutes,
+        });
+      }
+    }
+
+    const newRate = changes.rate ?? selectedInvoice.hourly_rate ?? 0;
+    const taxRateVal = changes.taxRate ?? selectedInvoice.tax_rate;
+    let subtotalVal: number;
+    let newItems: { description: string; quantity: number; unitPrice: number; total: number }[] | undefined;
+
+    if (changes.lineItems) {
+      newItems = changes.lineItems;
+      subtotalVal = newItems.reduce((sum, i) => sum + i.total, 0);
+    } else if (selectedInvoice.type === 'hourly' && (changes.dayUpdates || changes.rate !== undefined)) {
+      const updatedDays = selectedInvoice.period_start && selectedInvoice.period_end
+        ? getDailyHoursByPeriod(userId, selectedInvoice.period_start, selectedInvoice.period_end)
+        : [];
+      setSelectedInvoiceDays(updatedDays);
+      const totalMins = updatedDays.reduce((sum, d) => sum + d.total_minutes, 0);
+      subtotalVal = Math.round((totalMins / 60) * newRate * 100) / 100;
+    } else {
+      subtotalVal = selectedInvoice.subtotal;
+    }
+
+    const taxAmountVal = Math.round(subtotalVal * (taxRateVal / 100) * 100) / 100;
+    const totalVal = Math.round((subtotalVal + taxAmountVal) * 100) / 100;
+
+    const updated = await invoiceStore.updateInvoice(userId, selectedInvoice.id, {
+      ...(changes.rate !== undefined && { hourlyRate: changes.rate }),
+      ...(changes.taxRate !== undefined && { taxRate: changes.taxRate }),
+      ...(changes.notes !== undefined && { notes: changes.notes || null }),
+      ...(changes.dueDate !== undefined && { dueDate: changes.dueDate }),
+      subtotal: subtotalVal,
+      taxAmount: taxAmountVal,
+      total: totalVal,
+    }, newItems);
+
+    if (updated) {
+      setSelectedInvoice(updated);
+      if (updated.type === 'hourly' && updated.period_start && updated.period_end) {
+        setSelectedInvoiceDays(getDailyHoursByPeriod(userId, updated.period_start, updated.period_end));
+      }
+      if (updated.type === 'products_services') {
+        setSelectedInvoiceItems(getInvoiceItems(updated.id));
+      }
+    }
+  }, [userId, selectedInvoice, invoiceStore]);
+
+  const handleShareDetail = useCallback(async () => {
+    if (!userId || !selectedInvoice) return;
+    setIsRegeneratingPdf(true);
+    let pdfUri: string | null = null;
+    try {
+      pdfUri = await invoiceStore.regeneratePdf(userId, selectedInvoice);
+    } finally {
+      setIsRegeneratingPdf(false);
+    }
+    if (pdfUri) {
+      await shareInvoice(userId, { ...selectedInvoice, pdf_uri: pdfUri });
+    } else {
+      Alert.alert('Error', 'Could not generate PDF. Please try again.');
+    }
+  }, [userId, selectedInvoice, invoiceStore]);
+
+  const handleTogglePaid = useCallback(() => {
+    if (!userId || !selectedInvoice) return;
+    const nextStatus = selectedInvoice.status === 'paid' ? 'pending' : 'paid';
+    const ok = updateInvoiceStatus(userId, selectedInvoice.id, nextStatus);
+    if (!ok) {
+      Alert.alert('Error', 'Could not update invoice status.');
+      return;
+    }
+    // Optimistic local update + refresh recent list so the row reflects.
+    setSelectedInvoice({ ...selectedInvoice, status: nextStatus });
+    invoiceStore.loadRecentInvoices(userId);
+  }, [userId, selectedInvoice, invoiceStore]);
+
+  const handleDeleteDetail = useCallback(() => {
+    if (!userId || !selectedInvoice) return;
+    const invoice = selectedInvoice;
+    Alert.alert(
+      'Delete invoice?',
+      `Delete ${invoice.invoice_number}? This cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            invoiceStore.deleteInvoice(userId, invoice.id);
+            setSelectedInvoice(null);
+          },
+        },
+      ],
+    );
+  }, [userId, selectedInvoice, invoiceStore]);
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -104,17 +297,30 @@ export default function InvoiceScreen() {
           <Ionicons name="chevron-forward" size={16} color={withOpacity(colors.white, 0.6)} />
         </Pressable>
 
-        {/* TIMESHEET INVOICE CARD (full width) */}
-        <Pressable
-          style={styles.typeCard}
-          onPress={() => setWizardOpen(true)}
-        >
-          <View style={styles.typeCardIcon}>
-            <Ionicons name="time-outline" size={28} color={colors.accent} />
-          </View>
-          <Text style={styles.typeCardTitle}>Timesheet Invoice</Text>
-          <Text style={styles.typeCardSubtitle}>Generate from your logged hours</Text>
-        </Pressable>
+        {/* INVOICE TYPE CARDS (2-up grid, mirrors timekeeper) */}
+        <View style={styles.cardsRow}>
+          <Pressable
+            style={styles.typeCard}
+            onPress={() => setWizardOpen(true)}
+          >
+            <View style={styles.typeCardIcon}>
+              <Ionicons name="time-outline" size={28} color={colors.accent} />
+            </View>
+            <Text style={styles.typeCardTitle}>Timesheet</Text>
+            <Text style={styles.typeCardSubtitle}>From logged hours</Text>
+          </Pressable>
+
+          <Pressable
+            style={styles.typeCard}
+            onPress={() => setServicesOpen(true)}
+          >
+            <View style={[styles.typeCardIcon, styles.typeCardIconAmber]}>
+              <Ionicons name="list-outline" size={28} color={colors.warningDark} />
+            </View>
+            <Text style={styles.typeCardTitle}>Services</Text>
+            <Text style={styles.typeCardSubtitle}>Custom line items</Text>
+          </Pressable>
+        </View>
 
         {/* RECENT INVOICES */}
         <View style={styles.section}>
@@ -129,7 +335,7 @@ export default function InvoiceScreen() {
               <Pressable
                 key={inv.id}
                 style={styles.invoiceRow}
-                onPress={() => setDetail(inv)}
+                onPress={() => openInvoiceDetail(inv)}
               >
                 <View style={{ flex: 1 }}>
                   <Text style={styles.invoiceNumber}>{inv.invoice_number}</Text>
@@ -155,103 +361,136 @@ export default function InvoiceScreen() {
         onEditHoursRequest={handleEditHoursFromWizard}
       />
 
-      <InvoiceDetailModal
-        invoice={detail}
-        onClose={() => setDetail(null)}
-      />
-    </SafeAreaView>
-  );
-}
+      <Modal
+        visible={servicesOpen}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setServicesOpen(false)}
+      >
+        <ServicesWizard onBack={() => setServicesOpen(false)} />
+      </Modal>
 
-// ============================================
-// INVOICE DETAIL MODAL
-// ============================================
+      {/* INVOICE DETAIL MODAL — bottom-sheet hosting InvoiceSummaryCard
+          in dual read/edit mode (timekeeper pattern). */}
+      <Modal
+        visible={!!selectedInvoice}
+        transparent
+        animationType="slide"
+        statusBarTranslucent
+        onRequestClose={() => setSelectedInvoice(null)}
+      >
+        <View style={detailStyles.overlay}>
+          <View style={detailStyles.sheet}>
+            {selectedInvoice && (
+              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 20 }}>
+                <InvoiceSummaryCard
+                  invoiceNumber={selectedInvoice.invoice_number}
+                  createdAt={selectedInvoice.created_at}
+                  onClose={() => setSelectedInvoice(null)}
+                  clientName={selectedInvoice.client_name || ''}
+                  clientPhone={detailClientData?.phone || undefined}
+                  clientAddress={
+                    [
+                      detailClientData?.address_street,
+                      detailClientData?.address_city,
+                      detailClientData?.address_province,
+                      detailClientData?.address_postal_code,
+                    ].filter(Boolean).join(', ') || undefined
+                  }
+                  clientEmail={detailClientData?.email || undefined}
+                  onEditClient={handleEditClientFromDetail}
+                  dueDate={
+                    selectedInvoice.due_date
+                      ? new Date(selectedInvoice.due_date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                      : undefined
+                  }
+                  dueDateISO={selectedInvoice.due_date || undefined}
+                  days={selectedInvoice.type === 'hourly' ? detailDays : []}
+                  totalDays={selectedInvoiceDays.length}
+                  totalMinutes={selectedInvoiceDays.reduce((sum, d) => sum + d.total_minutes, 0)}
+                  totalLabel={formatDuration(selectedInvoiceDays.reduce((sum, d) => sum + d.total_minutes, 0))}
+                  rate={selectedInvoice.hourly_rate || 0}
+                  taxRate={selectedInvoice.tax_rate || 0}
+                  taxLabel={selectedInvoice.tax_rate === 13 ? 'HST' : selectedInvoice.tax_rate === 5 ? 'GST' : 'Tax'}
+                  lineItems={
+                    selectedInvoice.type === 'products_services'
+                      ? selectedInvoiceItems.map((item) => ({
+                          id: item.id,
+                          description: item.description,
+                          quantity: item.quantity,
+                          unitPrice: item.unit_price,
+                          total: item.total,
+                        }))
+                      : undefined
+                  }
+                  notes={selectedInvoice.notes || undefined}
+                  fromName={businessProfile?.business_name || undefined}
+                  fromPhone={businessProfile?.phone || undefined}
+                  fromAddress={
+                    [
+                      businessProfile?.address_street,
+                      businessProfile?.address_city,
+                      businessProfile?.address_province,
+                      businessProfile?.address_postal_code,
+                    ].filter(Boolean).join(', ') || undefined
+                  }
+                  fromEmail={businessProfile?.email || undefined}
+                  onEditFrom={handleEditFromDetail}
+                  onSave={handleSaveDetail}
+                />
 
-function InvoiceDetailModal({ invoice, onClose }: { invoice: InvoiceDB | null; onClose: () => void }) {
-  const userId = useAuthStore((s) => s.user?.id ?? null);
-  const [sharing, setSharing] = useState(false);
+                <View style={detailStyles.actionsSection}>
+                  <PressableOpacity
+                    style={[detailStyles.shareBtn, isRegeneratingPdf && { opacity: 0.6 }]}
+                    activeOpacity={0.7}
+                    disabled={isRegeneratingPdf}
+                    onPress={handleShareDetail}
+                  >
+                    {isRegeneratingPdf ? (
+                      <ActivityIndicator color={colors.white} />
+                    ) : (
+                      <Ionicons name="share-outline" size={18} color={colors.white} />
+                    )}
+                    <Text style={detailStyles.shareBtnText}>
+                      {isRegeneratingPdf ? 'Preparing…' : 'Share invoice'}
+                    </Text>
+                  </PressableOpacity>
 
-  if (!invoice) return null;
+                  <PressableOpacity
+                    style={detailStyles.paidBtn}
+                    activeOpacity={0.7}
+                    onPress={handleTogglePaid}
+                  >
+                    <Ionicons
+                      name={selectedInvoice.status === 'paid' ? 'checkmark-done-circle' : 'checkmark-circle-outline'}
+                      size={18}
+                      color={selectedInvoice.status === 'paid' ? colors.success : colors.textSecondary}
+                    />
+                    <Text
+                      style={[
+                        detailStyles.paidBtnText,
+                        selectedInvoice.status === 'paid' && { color: colors.success },
+                      ]}
+                    >
+                      {selectedInvoice.status === 'paid' ? 'Paid — tap to undo' : 'Mark as paid'}
+                    </Text>
+                  </PressableOpacity>
 
-  const handleShare = async () => {
-    if (!userId) return;
-    setSharing(true);
-    await shareInvoice(userId, invoice);
-    setSharing(false);
-  };
-
-  const periodLabel = invoice.period_start && invoice.period_end
-    ? formatDateRange(
-        new Date(invoice.period_start + 'T12:00'),
-        new Date(invoice.period_end + 'T12:00'),
-      )
-    : null;
-
-  return (
-    <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <SafeAreaView style={styles.detailRoot} edges={['top']}>
-        <View style={styles.detailHeader}>
-          <Pressable onPress={onClose} hitSlop={10} style={styles.detailBack}>
-            <Ionicons name="close" size={26} color={colors.text} />
-          </Pressable>
-          <Text style={styles.detailTitle}>{invoice.invoice_number}</Text>
-          <View style={styles.detailBack} />
-        </View>
-
-        <ScrollView contentContainerStyle={styles.detailBody}>
-          <View style={styles.detailCard}>
-            <Text style={styles.detailLabel}>Send to</Text>
-            <Text style={styles.detailValue}>{invoice.client_name || '—'}</Text>
-          </View>
-
-          {periodLabel ? (
-            <View style={styles.detailCard}>
-              <Text style={styles.detailLabel}>Period</Text>
-              <Text style={styles.detailValue}>{periodLabel}</Text>
-            </View>
-          ) : null}
-
-          <View style={styles.totalsCard}>
-            <TotalsRow label="Subtotal" value={formatMoney(invoice.subtotal)} />
-            {invoice.tax_rate > 0 ? (
-              <TotalsRow label={`Tax (${invoice.tax_rate}%)`} value={formatMoney(invoice.tax_amount)} />
-            ) : null}
-            <View style={styles.totalsDivider} />
-            <TotalsRow label="Total" value={formatMoney(invoice.total)} bold />
-          </View>
-
-          {invoice.notes ? (
-            <View style={styles.detailCard}>
-              <Text style={styles.detailLabel}>Notes</Text>
-              <Text style={styles.detailSub}>{invoice.notes}</Text>
-            </View>
-          ) : null}
-        </ScrollView>
-
-        <View style={styles.detailFooter}>
-          <Pressable
-            style={[styles.shareBtn, !invoice.pdf_uri && styles.shareBtnDisabled]}
-            onPress={handleShare}
-            disabled={!invoice.pdf_uri || sharing}
-          >
-            {sharing ? (
-              <ActivityIndicator color={colors.white} />
-            ) : (
-              <Text style={styles.shareBtnText}>Share PDF</Text>
+                  <PressableOpacity
+                    style={detailStyles.deleteBtn}
+                    activeOpacity={0.7}
+                    onPress={handleDeleteDetail}
+                  >
+                    <Ionicons name="trash-outline" size={18} color={colors.error} />
+                    <Text style={detailStyles.deleteBtnText}>Delete invoice</Text>
+                  </PressableOpacity>
+                </View>
+              </ScrollView>
             )}
-          </Pressable>
+          </View>
         </View>
-      </SafeAreaView>
-    </Modal>
-  );
-}
-
-function TotalsRow({ label, value, bold }: { label: string; value: string; bold?: boolean }) {
-  return (
-    <View style={styles.totalsRow}>
-      <Text style={[styles.totalsLabel, bold && styles.totalsLabelBold]}>{label}</Text>
-      <Text style={[styles.totalsValue, bold && styles.totalsValueBold]}>{value}</Text>
-    </View>
+      </Modal>
+    </SafeAreaView>
   );
 }
 
@@ -283,16 +522,21 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
 
-  // Single full-width type card — soft teal border + tint, mirrors Machine squares
+  // 2-up grid of invoice type cards (Timesheet | Services)
+  cardsRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 20,
+  },
   typeCard: {
+    flex: 1,
     backgroundColor: colors.card,
     borderRadius: 16,
-    paddingVertical: 28,
-    paddingHorizontal: 20,
+    paddingVertical: 22,
+    paddingHorizontal: 14,
     alignItems: 'center',
     borderWidth: 1.5,
     borderColor: withOpacity(colors.accent, 0.4),
-    marginBottom: 20,
     ...shadows.sm,
   },
   typeCardIcon: {
@@ -303,6 +547,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 12,
+  },
+  typeCardIconAmber: {
+    backgroundColor: withOpacity(colors.warningDark, 0.12),
   },
   typeCardTitle: {
     fontSize: 16,
@@ -342,45 +589,28 @@ const styles = StyleSheet.create({
   invoiceNumber: { fontSize: 14, fontWeight: '700', color: colors.text },
   invoiceClient: { fontSize: 12, color: colors.textSecondary, marginTop: 2 },
   invoiceTotal: { fontSize: 15, fontWeight: '700', color: colors.text },
+});
 
-  // Detail modal
-  detailRoot: { flex: 1, backgroundColor: colors.background },
-  detailHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.borderLight,
-  },
-  detailBack: { width: 40, height: 40, justifyContent: 'center' },
-  detailTitle: { fontSize: 17, fontWeight: '700', color: colors.text },
-  detailBody: { padding: spacing.lg, paddingBottom: spacing.xxl },
-  detailFooter: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.sm,
-    paddingBottom: Platform.OS === 'ios' ? spacing.lg : spacing.md,
-    borderTopWidth: 1,
-    borderTopColor: colors.borderLight,
-    backgroundColor: colors.background,
-  },
-  detailCard: {
-    backgroundColor: colors.surfaceMuted,
-    borderRadius: borderRadius.md,
-    padding: spacing.md,
-    marginBottom: spacing.md,
-  },
-  detailLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: colors.textSecondary,
-    letterSpacing: 0.5,
-    textTransform: 'uppercase',
-  },
-  detailValue: { fontSize: 16, fontWeight: '600', color: colors.text, marginTop: 4 },
-  detailSub: { fontSize: 13, color: colors.textSecondary, marginTop: 4 },
+// ============================================
+// DETAIL MODAL STYLES (timekeeper bottom-sheet)
+// ============================================
 
+const detailStyles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: colors.overlay,
+    justifyContent: 'flex-end',
+  },
+  sheet: {
+    backgroundColor: colors.white,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingTop: 12,
+    paddingBottom: Platform.OS === 'ios' ? 40 : 24,
+    paddingHorizontal: 20,
+    maxHeight: Dimensions.get('window').height * 0.92,
+  },
+  actionsSection: { gap: 8, marginTop: 16 },
   shareBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -390,25 +620,26 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     paddingVertical: 14,
   },
-  shareBtnDisabled: { opacity: 0.4 },
   shareBtnText: { fontSize: 15, fontWeight: '600', color: colors.white },
-
-  totalsCard: {
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: borderRadius.md,
-    padding: spacing.md,
-    marginTop: spacing.sm,
-  },
-  totalsRow: {
+  paidBtn: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    borderRadius: 14,
+    paddingVertical: 14,
+    backgroundColor: colors.surfaceMuted,
   },
-  totalsLabel: { fontSize: 14, color: colors.textSecondary },
-  totalsValue: { fontSize: 14, color: colors.text, fontWeight: '600' },
-  totalsLabelBold: { color: colors.text, fontWeight: '700', fontSize: 16 },
-  totalsValueBold: { color: colors.accent, fontWeight: '800', fontSize: 16 },
-  totalsDivider: { height: 1, backgroundColor: colors.borderLight, marginVertical: 6 },
+  paidBtnText: { fontSize: 15, fontWeight: '600', color: colors.textSecondary },
+  deleteBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    borderRadius: 14,
+    paddingVertical: 14,
+    borderWidth: 1,
+    borderColor: withOpacity(colors.error, 0.3),
+  },
+  deleteBtnText: { fontSize: 15, fontWeight: '500', color: colors.error },
 });
