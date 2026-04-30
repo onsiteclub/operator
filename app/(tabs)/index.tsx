@@ -20,6 +20,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useKeepAwake } from 'expo-keep-awake';
 import { colors, spacing, borderRadius, typography, withOpacity } from '@onsite/tokens';
 import { supabase } from '../../src/lib/supabase';
 import { useShiftToggle } from '../../src/hooks/useShiftToggle';
@@ -60,6 +61,11 @@ const LANG_FLAGS: Record<string, string> = {
 };
 
 export default function RequestsScreen() {
+  // Keep the screen awake while this tab is mounted. Auto-released on unmount
+  // (e.g., when the operator switches to Machine/Invoice or backgrounds the app).
+  useKeepAwake();
+
+  const { isOnline } = useShiftToggle();
   const [requests, setRequests] = useState<IncomingRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -186,6 +192,15 @@ export default function RequestsScreen() {
         <ShiftStatusCard />
       </View>
 
+      {!isOnline ? (
+        <View style={styles.offlineBanner}>
+          <Ionicons name="alert-circle" size={16} color={colors.error} />
+          <Text style={styles.offlineBannerText}>
+            Tap <Text style={styles.offlineBannerStrong}>Start shift</Text> to begin responding — workers are getting the auto-reply right now.
+          </Text>
+        </View>
+      ) : null}
+
       <View style={styles.tabBar}>
         <Pressable
           style={[styles.tab, activeTab === 'queue' && styles.tabActive]}
@@ -221,6 +236,7 @@ export default function RequestsScreen() {
           <ActivityIndicator size="large" color={colors.accent} />
         </View>
       ) : (
+        <View style={[{ flex: 1 }, !isOnline && styles.listOffline]}>
         <FlatList
           data={displayedItems}
           keyExtractor={(item) => item.id}
@@ -264,6 +280,7 @@ export default function RequestsScreen() {
             );
           }}
         />
+        </View>
       )}
 
       </KeyboardAvoidingView>
@@ -667,6 +684,32 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.sm,
     paddingBottom: spacing.sm,
+  },
+  offlineBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.xs,
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: borderRadius.md,
+    backgroundColor: withOpacity(colors.error, 0.08),
+    borderWidth: 1,
+    borderColor: withOpacity(colors.error, 0.25),
+  },
+  offlineBannerText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 16,
+    color: colors.text,
+  },
+  offlineBannerStrong: {
+    fontWeight: '700',
+    color: colors.error,
+  },
+  listOffline: {
+    opacity: 0.5,
   },
   shiftCard: {
     flexDirection: 'row',
