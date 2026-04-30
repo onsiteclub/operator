@@ -16,6 +16,7 @@ import { useAuthStore } from '../src/stores/authStore';
 import { useSupervisorPhone } from '../src/hooks/useSupervisorPhone';
 import { useForwardNumber } from '../src/hooks/useForwardNumber';
 import { formatPhoneDisplay } from '../src/lib/format';
+import { supabase } from '../src/lib/supabase';
 
 export default function SettingsScreen() {
   const router = useRouter();
@@ -152,6 +153,56 @@ export default function SettingsScreen() {
     ]);
   };
 
+  const [deleting, setDeleting] = useState(false);
+  const handleDeleteAccount = () => {
+    // Two-step confirmation. First Alert sets the stakes; second
+    // forces the user to acknowledge the irreversible bits — Twilio
+    // numbers released, account hard-deleted, can't sign back in.
+    Alert.alert(
+      'Delete account?',
+      'This permanently removes your account, releases your phone number, and erases your data. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Continue',
+          style: 'destructive',
+          onPress: () => {
+            Alert.alert(
+              'Are you sure?',
+              'Last chance. Once you confirm, your account and all data will be gone.',
+              [
+                { text: 'Keep account', style: 'cancel' },
+                {
+                  text: 'Delete forever',
+                  style: 'destructive',
+                  onPress: async () => {
+                    setDeleting(true);
+                    try {
+                      const { error } = await supabase.functions.invoke('delete-account', {
+                        body: {},
+                      });
+                      if (error) throw error;
+                      // Local sign-out + cleanup; the auth user is already gone server-side.
+                      try { await signOut(); } catch { /* noop */ }
+                      router.replace('/(auth)/login' as any);
+                    } catch (err) {
+                      Alert.alert(
+                        'Could not delete',
+                        String((err as Error)?.message ?? err),
+                      );
+                    } finally {
+                      setDeleting(false);
+                    }
+                  },
+                },
+              ],
+            );
+          },
+        },
+      ],
+    );
+  };
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.topBar}>
@@ -251,6 +302,17 @@ export default function SettingsScreen() {
         >
           <Ionicons name="log-out-outline" size={20} color={colors.error} />
           <Text style={styles.signOutText}>{signingOut ? 'Signing out...' : 'Sign out'}</Text>
+        </Pressable>
+
+        <Pressable
+          style={[styles.deleteAccountBtn, deleting && { opacity: 0.5 }]}
+          onPress={handleDeleteAccount}
+          disabled={deleting || signingOut}
+        >
+          <Ionicons name="trash-outline" size={18} color={colors.textMuted} />
+          <Text style={styles.deleteAccountText}>
+            {deleting ? 'Deleting account…' : 'Delete my account'}
+          </Text>
         </Pressable>
       </ScrollView>
     </SafeAreaView>
@@ -373,4 +435,19 @@ const styles = StyleSheet.create({
     borderColor: colors.error,
   },
   signOutText: { fontSize: 15, fontWeight: '700', color: colors.error },
+
+  deleteAccountBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+    paddingVertical: spacing.md,
+    marginTop: spacing.md,
+  },
+  deleteAccountText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: colors.textMuted,
+    textDecorationLine: 'underline',
+  },
 });

@@ -37,8 +37,11 @@ let appStateSubscription: ReturnType<typeof AppState.addEventListener> | null = 
 // Holds the Supabase session created by signUp() until the user completes
 // phone verification. Session is NOT committed to the Zustand store while
 // pending — this prevents isAuthenticated() from returning true during OTP.
-let _pendingSession: Session | null = null;
-let _pendingUser: User | null = null;
+// (Module refs for pending session/user removed — the new phone-first
+// signup flow never produces a session until verifyOtp succeeds, so
+// there's nothing to park. The pendingPhoneVerification flag in store
+// state is enough for the onAuthStateChange guard to ignore stray
+// SIGNED_IN events during the OTP step.)
 
 // ============================================
 // TYPES
@@ -294,93 +297,86 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         return { success: false, error: 'Supabase not configured' };
       }
 
-      const signUpOptions: Record<string, unknown> = {};
-      if (metadata) {
-        signUpOptions.data = {
-          first_name: metadata.firstName,
-          last_name: metadata.lastName,
-          full_name: `${metadata.firstName} ${metadata.lastName}`,
-        };
+      // CRITICAL: this Supabase project is shared across multiple apps
+      // (operator, checklist, invoicepass, …) and the email template
+      // is project-global — branded "InvoicePass". Calling
+      // `supabase.auth.signUp()` from the client would therefore send
+      // a misleading "Confirm your email — InvoicePass" message to
+      // operator customers, with a link defaulting to the first entry
+      // of uri_allow_list (also invoicepass).
+      //
+      // Workaround: route signup through the signup-operator Edge
+      // Function, which uses the admin API with `email_confirm: true`
+      // — short-circuiting the entire confirmation-email flow. No
+      // email of any kind is sent to operator customers. The user is
+      // created with phone unconfirmed; we then sign them in with
+      // password and verify the phone via the existing Twilio Verify
+      // SMS round-trip. InvoicePass and other sibling apps are
+      // untouched.
+      if (!phone) {
+        // The operator UX always collects a phone — guard explicitly
+        // so we don't silently regress to email-only accounts.
+        return { success: false, error: 'Phone is required' };
       }
 
-      const { data, error } = await supabase.auth.signUp({
-        email: email.trim().toLowerCase(),
-        password,
-        options: signUpOptions,
+      const { data: signupResp, error: signupErr } = await supabase.functions.invoke('signup-operator', {
+        body: {
+          email: email.trim().toLowerCase(),
+          password,
+          phone,
+          firstName: metadata?.firstName,
+          lastName: metadata?.lastName,
+        },
       });
 
-      if (error) {
-        logger.error('auth', 'Sign up error', { error: error.message });
-        if (phone) set({ pendingPhoneVerification: false, pendingVerificationPhone: null });
-        set({ error: error.message });
-        return { success: false, error: error.message };
+      if (signupErr) {
+        logger.error('auth', 'signup-operator invoke failed', { error: signupErr.message });
+        set({ pendingPhoneVerification: false, pendingVerificationPhone: null });
+        // The functions client returns FunctionsHttpError for non-2xx; try
+        // to surface the function's structured error code from the body.
+        const ctxBody = (signupErr as { context?: { body?: unknown } }).context?.body;
+        const fnError = typeof ctxBody === 'string'
+          ? (() => { try { return JSON.parse(ctxBody); } catch { return null; } })()
+          : ctxBody;
+        const code = (fnError as { error?: string })?.error;
+        if (code === 'already_registered') return { success: false, error: 'already_registered' };
+        return { success: false, error: signupErr.message };
       }
-
-      // Check if email already exists (empty identities = duplicate signup attempt)
-      // MUST be checked BEFORE needsConfirmation — both have data.user && !data.session
-      if (data.user && data.user.identities && data.user.identities.length === 0) {
-        logger.info('auth', 'Email already exists (empty identities)');
-        if (phone) set({ pendingPhoneVerification: false, pendingVerificationPhone: null });
+      if ((signupResp as { error?: string })?.error === 'already_registered') {
+        set({ pendingPhoneVerification: false, pendingVerificationPhone: null });
         return { success: false, error: 'already_registered' };
       }
 
-      if (data.session) {
-        logger.info('auth', `✅ Signed up: ${__DEV__ ? data.session.user.email : 'user_' + data.session.user.id.slice(0, 8)}`);
+      logger.info('auth', 'Account created via admin API; sending phone OTP');
 
-        // If phone provided, DEFER session commit until OTP is verified.
-        // Park session/user in module-level refs so isAuthenticated() stays false
-        // and back button / cold restart cannot bypass verification.
-        if (phone) {
-          _pendingSession = data.session;
-          _pendingUser = data.session.user;
-          set({ error: null });
-
-          // Register phone to trigger OTP. Session stays uncommitted.
-          try {
-            const { error: phoneError } = await supabase.auth.updateUser({ phone });
-            if (phoneError) {
-              logger.warn('auth', 'Phone OTP send failed after signup', { error: phoneError.message });
-              // OTP couldn't be sent — abort the pending session and surface error.
-              _pendingSession = null;
-              _pendingUser = null;
-              try { await supabase.auth.signOut({ scope: 'local' }); } catch { /* noop */ }
-              set({ pendingPhoneVerification: false, pendingVerificationPhone: null });
-              return { success: false, error: phoneError.message };
-            }
-            logger.info('auth', 'OTP sent to phone for verification');
-            return { success: true, needsPhoneVerification: true };
-          } catch (e) {
-            logger.warn('auth', 'Phone registration exception', { error: String(e) });
-            _pendingSession = null;
-            _pendingUser = null;
-            try { await supabase.auth.signOut({ scope: 'local' }); } catch { /* noop */ }
-            set({ pendingPhoneVerification: false, pendingVerificationPhone: null });
-            return { success: false, error: String(e) };
-          }
-        }
-
-        // No phone verification needed — commit session immediately.
-        set({
-          session: data.session,
-          user: data.session.user,
-          error: null,
+      // Trigger Twilio Verify SMS for the phone we just attached. The
+      // user was created with phone unconfirmed; signInWithOtp({ phone })
+      // on an existing-with-phone user sends an SMS OTP that, when
+      // verified, both confirms the phone and establishes the session.
+      // No prior session is needed — we never call signInWithPassword
+      // here, so the only auth event that fires is SIGNED_IN after
+      // verifyOtp succeeds.
+      //
+      // pendingPhoneVerification is already set above; the
+      // onAuthStateChange guard will block any spurious SIGNED_IN until
+      // verifyPhoneOtp clears the flag.
+      try {
+        const { error: otpErr } = await supabase.auth.signInWithOtp({
+          phone,
+          options: { shouldCreateUser: false },
         });
-
-        await setBackgroundUserId(data.session.user.id);
-
-        return { success: true, needsConfirmation: false };
+        if (otpErr) {
+          logger.warn('auth', 'Phone OTP send failed after signup', { error: otpErr.message });
+          set({ pendingPhoneVerification: false, pendingVerificationPhone: null });
+          return { success: false, error: otpErr.message };
+        }
+        logger.info('auth', 'OTP sent to phone for verification');
+        return { success: true, needsPhoneVerification: true };
+      } catch (e) {
+        logger.warn('auth', 'Phone registration exception', { error: String(e) });
+        set({ pendingPhoneVerification: false, pendingVerificationPhone: null });
+        return { success: false, error: String(e) };
       }
-
-      // Email confirmation required (new user, no session yet)
-      if (data.user && !data.session) {
-        logger.info('auth', 'Email confirmation required');
-        if (phone) set({ pendingPhoneVerification: false, pendingVerificationPhone: null });
-        return { success: true, needsConfirmation: true };
-      }
-
-      if (phone) set({ pendingPhoneVerification: false, pendingVerificationPhone: null });
-      return { success: false, error: 'Unknown error during sign up' };
-
     } catch (error) {
       const errorMsg = String(error);
       logger.error('auth', 'Sign up exception', { error: errorMsg });
@@ -706,10 +702,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   verifyPhoneOtp: async (phone, token) => {
     try {
-      const { error } = await supabase.auth.verifyOtp({
+      // Type is 'sms' because admin createUser left the phone in the
+      // unconfirmed state — this OTP is the initial confirmation of an
+      // existing phone, not a phone change. (The previous flow used
+      // signUp + updateUser({ phone }), which produced a 'phone_change'
+      // token; that path is gone now.)
+      const { data: verifyData, error } = await supabase.auth.verifyOtp({
         phone,
         token,
-        type: 'phone_change',
+        type: 'sms',
       });
 
       if (error) {
@@ -719,13 +720,20 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
       logger.info('auth', 'Phone verified successfully');
 
-      // Commit the pending session now that OTP is verified.
-      // signUp() parked session/user in module refs — promote them to the store.
-      if (_pendingSession && _pendingUser) {
-        set({ session: _pendingSession, user: _pendingUser, error: null });
-        await setBackgroundUserId(_pendingUser.id);
-        _pendingSession = null;
-        _pendingUser = null;
+      // Commit the session that verifyOtp returned. We must clear
+      // pendingPhoneVerification BEFORE setting session/user, otherwise
+      // the onAuthStateChange guard would still treat the SIGNED_IN
+      // event from this verifyOtp as parked and ignore it.
+      set({
+        pendingPhoneVerification: false,
+        pendingVerificationPhone: null,
+        otpResendCount: 0,
+        otpResendCooldownEnd: null,
+      });
+
+      if (verifyData?.session && verifyData?.user) {
+        set({ session: verifyData.session, user: verifyData.user, error: null });
+        await setBackgroundUserId(verifyData.user.id);
       }
 
       // Refresh user to get latest metadata (may have changed since signup)
@@ -880,14 +888,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   clearOtpState: () => {
-    // Destroy any uncommitted session on Supabase side. Without this, pressing
-    // Back at OTP step would leave the Supabase session alive — a cold restart
-    // could then hydrate session via getSession() and bypass verification.
-    if (_pendingSession) {
-      supabase.auth.signOut({ scope: 'local' }).catch(() => { /* best-effort */ });
-      _pendingSession = null;
-      _pendingUser = null;
-    }
+    // Local sign-out as a belt-and-braces: in the new phone-first
+    // signup flow no session exists pre-verification, but the password
+    // reset flow does briefly create one between verifyResetOtp and
+    // updatePasswordAfterReset — backing out at that point should drop
+    // it so a cold restart can't hydrate via getSession().
+    supabase.auth.signOut({ scope: 'local' }).catch(() => { /* best-effort */ });
     set({
       pendingPhoneVerification: false,
       pendingPasswordReset: false,
