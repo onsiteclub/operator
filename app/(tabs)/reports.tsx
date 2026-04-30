@@ -107,13 +107,7 @@ export default function InvoiceScreen() {
         {/* TIMESHEET INVOICE CARD (full width) */}
         <Pressable
           style={styles.typeCard}
-          onPress={() => {
-            if (!businessProfile) {
-              router.push('/business-profile');
-              return;
-            }
-            setWizardOpen(true);
-          }}
+          onPress={() => setWizardOpen(true)}
         >
           <View style={styles.typeCardIcon}>
             <Ionicons name="time-outline" size={28} color={colors.accent} />

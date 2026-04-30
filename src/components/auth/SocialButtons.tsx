@@ -23,10 +23,7 @@ import * as AppleAuthentication from 'expo-apple-authentication';
 import { colors } from '../../constants/colors';
 import { useAuthStore } from '../../stores/authStore';
 
-// PLACEHOLDER MODE: render the buttons but skip the actual OAuth flow.
-// Flip to false once Apple Developer Portal capability + Google Cloud
-// SHA-1 (Android release) are wired and the next build is ready to test.
-const PLACEHOLDER_MODE = true;
+const PLACEHOLDER_MODE = false;
 
 function GoogleLogo({ size = 20 }: { size?: number }) {
   return (
