@@ -138,23 +138,29 @@ export default function MachineScreen() {
         store.setOffline('broken');
       }
 
-      const { data: { user } } = await supabase.auth.getUser();
+      const message = type === 'low_fuel'
+        ? 'Low fuel — still working'
+        : type === 'broken'
+          ? 'Machine broken down — going offline'
+          : 'Maintenance needed';
 
-      await supabase.from('frm_alerts').insert({
-        operator_id: user?.id,
-        type,
-        supervisor_phone: supervisorPhone,
-        message: type === 'low_fuel'
-          ? 'Low fuel — still working'
-          : type === 'broken'
-            ? 'Machine broken down — going offline'
-            : 'Maintenance needed',
+      const { data, error } = await supabase.functions.invoke('send-to-supervisor', {
+        body: { type, supervisor_phone: supervisorPhone, message },
       });
+      if (error) throw error;
 
       const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      Alert.alert('Supervisor notified', `Alert sent at ${time}`);
-    } catch {
-      Alert.alert('Error', 'Could not send alert. Will retry when online.');
+      if (data?.sent) {
+        Alert.alert('Supervisor notified', `SMS sent at ${time} to ${supervisorPhone}.`);
+      } else {
+        Alert.alert(
+          'Alert recorded',
+          `Logged at ${time}, but the SMS could not be delivered. Check that this operator has an active provisioned number.`,
+        );
+      }
+    } catch (err) {
+      console.error('send-to-supervisor failed:', err);
+      Alert.alert('Error', 'Could not send alert. Try again when back online.');
     } finally {
       setBusy(false);
     }

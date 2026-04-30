@@ -14,6 +14,7 @@ import { useRouter } from 'expo-router';
 import { colors, spacing, borderRadius, typography } from '@onsite/tokens';
 import { useAuthStore } from '../src/stores/authStore';
 import { useSupervisorPhone } from '../src/hooks/useSupervisorPhone';
+import { useForwardNumber } from '../src/hooks/useForwardNumber';
 import { formatPhoneDisplay } from '../src/lib/format';
 
 export default function SettingsScreen() {
@@ -27,6 +28,9 @@ export default function SettingsScreen() {
   const [supervisorInput, setSupervisorInput] = useState('');
   const [savingSupervisor, setSavingSupervisor] = useState(false);
 
+  const { phone: forwardPhone, loaded: forwardLoaded, saving: savingForward, save: saveForwardPhone } = useForwardNumber();
+  const [forwardInput, setForwardInput] = useState('');
+
   useEffect(() => {
     // Re-seed input from saved value (digits only, formatted for display)
     if (supervisorPhone) {
@@ -36,6 +40,48 @@ export default function SettingsScreen() {
       setSupervisorInput('');
     }
   }, [supervisorPhone]);
+
+  useEffect(() => {
+    if (!forwardLoaded) return;
+    if (forwardPhone) {
+      const digits = forwardPhone.replace(/\D/g, '').slice(-10);
+      setForwardInput(formatPhoneDisplay(digits));
+    } else {
+      setForwardInput('');
+    }
+  }, [forwardPhone, forwardLoaded]);
+
+  const handleForwardChange = (value: string) => {
+    const digits = value.replace(/\D/g, '').slice(0, 10);
+    setForwardInput(formatPhoneDisplay(digits));
+  };
+
+  const handleForwardSave = async () => {
+    const digits = forwardInput.replace(/\D/g, '');
+    if (digits.length > 0 && digits.length !== 10) {
+      Alert.alert('Invalid number', 'Enter a 10-digit phone number, or leave blank to disable calls.');
+      return;
+    }
+    try {
+      await saveForwardPhone(digits);
+      if (digits.length === 10) {
+        Alert.alert(
+          'Calls forwarded',
+          `Incoming calls to your work line will ring ${formatPhoneDisplay(digits)}.`,
+        );
+      } else {
+        Alert.alert('Calls disabled', 'No forwarding number set — callers will hear an unavailable message.');
+      }
+    } catch (err) {
+      Alert.alert('Could not save', String((err as Error)?.message ?? err));
+    }
+  };
+
+  const forwardInputDigits = forwardInput.replace(/\D/g, '');
+  const canSaveForward =
+    !savingForward &&
+    (forwardInputDigits.length === 10 ||
+      (forwardInputDigits.length === 0 && !!forwardPhone));
 
   const handleSupervisorChange = (value: string) => {
     const digits = value.replace(/\D/g, '').slice(0, 10);
@@ -51,16 +97,24 @@ export default function SettingsScreen() {
     setSavingSupervisor(true);
     try {
       await saveSupervisorPhone(digits);
+      if (digits.length === 10) {
+        Alert.alert(
+          'Supervisor saved',
+          `Alerts from the Machine tab will go to ${formatPhoneDisplay(digits)}.`,
+        );
+      } else {
+        Alert.alert('Supervisor cleared', 'No supervisor number is set — alerts are disabled.');
+      }
     } finally {
       setSavingSupervisor(false);
     }
   };
 
-  const supervisorDirty = (() => {
-    const inputDigits = supervisorInput.replace(/\D/g, '');
-    const savedDigits = (supervisorPhone || '').replace(/\D/g, '').slice(-10);
-    return inputDigits !== savedDigits;
-  })();
+  const supervisorInputDigits = supervisorInput.replace(/\D/g, '');
+  const canSaveSupervisor =
+    !savingSupervisor &&
+    (supervisorInputDigits.length === 10 ||
+      (supervisorInputDigits.length === 0 && !!supervisorPhone));
 
   const handleSignOut = () => {
     Alert.alert('Sign out?', 'You will need to sign in again to use the app.', [
@@ -133,11 +187,43 @@ export default function SettingsScreen() {
               maxLength={14}
             />
             <Pressable
-              style={[styles.saveBtn, (!supervisorDirty || savingSupervisor) && styles.saveBtnDisabled]}
+              style={[styles.saveBtn, !canSaveSupervisor && styles.saveBtnDisabled]}
               onPress={handleSupervisorSave}
-              disabled={!supervisorDirty || savingSupervisor}
+              disabled={!canSaveSupervisor}
             >
               <Text style={styles.saveBtnText}>{savingSupervisor ? '…' : 'Save'}</Text>
+            </Pressable>
+          </View>
+        </View>
+
+        <Text style={styles.sectionLabel}>PHONE CALLS</Text>
+        <View style={styles.card}>
+          <View style={[styles.row, { paddingBottom: spacing.xs }]}>
+            <Ionicons name="phone-portrait-outline" size={20} color={colors.textSecondary} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rowLabel}>Forward to my cell</Text>
+              <Text style={styles.helpText}>
+                When a worker calls your work line, the call rings here.
+              </Text>
+            </View>
+          </View>
+          <View style={styles.inputRow}>
+            <TextInput
+              style={styles.input}
+              value={forwardInput}
+              onChangeText={handleForwardChange}
+              placeholder="(555) 123-4567"
+              placeholderTextColor={colors.textMuted}
+              keyboardType="phone-pad"
+              maxLength={14}
+              editable={forwardLoaded}
+            />
+            <Pressable
+              style={[styles.saveBtn, !canSaveForward && styles.saveBtnDisabled]}
+              onPress={handleForwardSave}
+              disabled={!canSaveForward}
+            >
+              <Text style={styles.saveBtnText}>{savingForward ? '…' : 'Save'}</Text>
             </Pressable>
           </View>
         </View>

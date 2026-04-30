@@ -32,6 +32,10 @@ Thumbs.db
 .idea/
 *.swp
 
+# Local agent + Supabase CLI state
+.claude/
+supabase/.temp/
+
 # Logs
 *.log
 npm-debug.log*
